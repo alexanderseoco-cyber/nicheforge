@@ -333,4 +333,12 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Recorded approved DA semantics: minimum weak domains `4` = PASS, ideal weak domains `5+` = IDEAL, configurable and Run-snapshotted; adaptive authority mode is planned as the bulk default.
 - Updated `PROJECT.md` and `docs/PROJECT_BLUEPRINT.md` only for this approved architectural change. Existing implementation fields still require the Provider Readiness checkpoint’s migrations and tests before live activation.
 - No credentials were added, no live provider calls were made, and no production paid mode was enabled.
+
+## Provider Readiness contained implementation
+
+- Added deterministic adaptive/full authority evaluation service with 4=PASS, 5+=IDEAL, mathematical failure, unchecked-position preservation, and cached/fetched target accounting fields.
+- Added DataForSEO runtime mode/budget guard boundary: SANDBOX default, TRIAL approval/ceiling checks, PRODUCTION disabled by default.
+- Added provider-readiness tests; full suite: `52 passed, 1217 warnings`.
+- Official DataForSEO research recorded Sandbox as free/dummy-data and documented Standard/Live/depth/rate-limit facts. Moz endpoint, quota, KD, batching, and billing details remain UNVERIFIED.
+- No credentials requested or inserted; no live paid API call made.
 - Repository initialized and pushed to the supplied GitHub remote in commit `40d75a1`.

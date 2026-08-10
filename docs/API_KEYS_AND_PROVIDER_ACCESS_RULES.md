@@ -35,6 +35,8 @@ Conflicting SV observations are retained separately and are never averaged. Ahre
 
 DataForSEO Sandbox, trial credit, minimum top-up, refund, balance-expiry, and current prices are commercial facts that must be verified against current official documentation/account access before being relied upon. The project must not hardcode them as permanent guarantees.
 
+Current official DataForSEO documentation confirms that Sandbox requests are not charged and return dummy/sample data. The official SERP overview also documents Standard and Live methods, configurable depth/cost behavior, and a stated limit of up to 2,000 POST/GET calls per minute with up to 100 tasks per POST; current account pricing and trial terms remain configuration/account-verification items. Moz endpoint, quota, batching, KD, and billing details remain `UNVERIFIED` pending current official Moz material or account documentation.
+
 ## Paid-call authorization
 
 Before paid execution, preview must show candidate count, reusable/imported SV, required SERPs, estimated provider cost, cached/fresh authority targets, adaptive target range, and expected downstream KD work. The default behavior is manual approval of the estimated paid run. No silent cross-provider fallback is allowed; fallback requires an explicit approved provider policy.
