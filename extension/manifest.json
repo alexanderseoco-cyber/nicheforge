@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "NicheForge SERP Overlay",
+  "version": "0.1.0",
+  "description": "Shows NicheForge-authorized SEO metrics beneath Google organic results.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://www.google.com/*", "http://localhost:8000/*"],
+  "background": {"service_worker": "service-worker.js", "type": "module"},
+  "content_scripts": [{
+    "matches": ["https://www.google.com/search*"],
+    "js": ["content.js"],
+    "run_at": "document_idle"
+  }]
+}

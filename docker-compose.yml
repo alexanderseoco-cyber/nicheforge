@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: nicheforge
+      POSTGRES_USER: nicheforge
+      POSTGRES_PASSWORD: nicheforge
+    ports: ["5432:5432"]
+    volumes: ["nicheforge_pg:/var/lib/postgresql/data"]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+volumes:
+  nicheforge_pg:
