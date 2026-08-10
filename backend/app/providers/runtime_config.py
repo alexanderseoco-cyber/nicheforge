@@ -13,6 +13,7 @@ class DataForSEOConfig:
     mode: ProviderMode = ProviderMode.SANDBOX
     standard_serp_cost: float = 0.0
     spend_ceiling: float = 0.0
+    remaining_trial_budget: float | None = None
     production_enabled: bool = False
     credentials_configured: bool = False
     provider_enabled: bool = True
@@ -24,7 +25,8 @@ class DataForSEOConfig:
             raise ValueError("DataForSEO credentials are not configured")
         if self.mode == ProviderMode.PRODUCTION and not self.production_enabled:
             raise ValueError("DataForSEO production mode is disabled")
-        if estimated_cost > self.spend_ceiling:
+        budget = self.remaining_trial_budget if self.remaining_trial_budget is not None else self.spend_ceiling
+        if estimated_cost > budget:
             raise ValueError("Estimated provider cost exceeds configured spend ceiling")
         if self.mode != ProviderMode.SANDBOX and not approved:
             raise ValueError("Paid provider execution requires explicit approval")

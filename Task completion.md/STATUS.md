@@ -372,3 +372,9 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Added the 100-candidate ADAPTIVE-versus-FULL deterministic comparison. It proves target reduction, IDEAL/PASS/rejection classifications, and truthful unchecked counts.
 - Added smoke-boundary and 100-candidate acceptance tests.
 - Verification: `56 passed, 1217 warnings`.
+
+### Provider Readiness — Trial budget guard coverage
+
+- Added explicit remaining Trial budget configuration with exact-boundary enforcement.
+- Added tests for below-budget, exactly-at-budget, above-budget, missing approval/credentials, disabled provider, and historical configuration immutability.
+- Verification: `58 passed, 1217 warnings`.
