@@ -16,6 +16,7 @@ from app.services.cache_keys import evidence_is_fresh, provider_cache_key
 from app.services.gates import population_gate, search_volume_gate
 from app.services.normalization import root_domain
 from app.domain.freshness import FreshnessPolicy, can_reuse
+from app.services.authority_evaluation import AuthorityEvaluationMode, evaluate_authority
 
 
 def utc_now() -> datetime:
@@ -157,10 +158,12 @@ async def execute_run(db: Session, run_id: str, project_candidate_ids: list[str]
                     ev = cached; _call(db, run, rc, ev.provider, "authority", "reuse", authority_key, "cache_hit", ev.source_kind, True); counters["cache_hits"] += 1
                     if stale_warning: _event(db, rc, "STALE_EVIDENCE_REUSED", refs={"authority_evidence_id": ev.id}, metadata={"freshness_policy": run.freshness_policy, "stage": "authority"})
                 usable=metric.da is not None; available += int(usable); counted=bool(usable and metric.da < run.da_threshold); low += int(counted); db.add(RunCandidateAuthorityEvidence(run_candidate_id=rc.id, serp_result_row_id=row.id, authority_evidence_id=ev.id, ranking_position=row.position, da_value_used=metric.da, counted_as_low_da=counted))
-            rc.organic_results_evaluated=len(rows); rc.authority_results_available=available; rc.low_da_count=low; rc.da_threshold_used=run.da_threshold; rc.required_low_da_count_used=run.required_low_da_count
+            minimum_weak = run.required_low_da_count
+            evaluation = evaluate_authority([metric.da if metric else None for metric in metrics], run.organic_depth, minimum_weak, run.ideal_weak_domains, run.da_threshold, AuthorityEvaluationMode(run.authority_evaluation_mode), sum(1 for source in metric_sources if source[0] is not None), len(missing))
+            rc.organic_results_evaluated=len(rows); rc.authority_results_available=available; rc.low_da_count=evaluation.confirmed_weak_count; rc.da_threshold_used=run.da_threshold; rc.required_low_da_count_used=minimum_weak; rc.minimum_weak_domains_used=minimum_weak; rc.ideal_weak_domains_used=run.ideal_weak_domains; rc.authority_evaluation_mode_used=run.authority_evaluation_mode; rc.authority_targets_evaluated=evaluation.authority_targets_evaluated; rc.authority_targets_cached=evaluation.authority_targets_cached; rc.authority_targets_fetched=evaluation.authority_targets_fetched; rc.authority_targets_unchecked=evaluation.unchecked_remaining; rc.confirmed_weak_count=evaluation.confirmed_weak_count; rc.opportunity_classification=evaluation.opportunity_classification
             if available < len(rows):
                 _set_status(rc, "ERROR_RETRYABLE", "DATA_INCOMPLETE"); counters["authority_incomplete"] += 1
-            elif low < run.required_low_da_count:
+            elif low < minimum_weak:
                 _set_status(rc, "PRIMARY_REJECTED", "LOW_DA_COUNT_BELOW_REQUIRED"); rc.automatic_status="PRIMARY_REJECTED"; rc.primary_gate_passed=False; counters["primary_rejected"] += 1
             else:
                 _set_status(rc, "PASS"); rc.automatic_status="PASS"; rc.primary_gate_passed=True; counters["primary_passed"] += 1

@@ -6,7 +6,11 @@ class ValidationProfile(BaseModel):
     max_population: int = 120_000
     min_search_volume: int = 300
     da_threshold: float = 10.0
-    required_low_da_count: int = 5
+    required_low_da_count: int = 4
+    minimum_weak_domains: int = 4
+    ideal_weak_domains: int = 5
+    authority_evaluation_mode: str = "ADAPTIVE"
+    authority_batch_size: int = 5
     organic_depth: int = 10
     kd_enabled: bool = True
     kd_provider: str = "moz"
@@ -66,6 +70,9 @@ class RunOut(BaseModel):
     min_search_volume: int
     da_threshold: float
     required_low_da_count: int
+    minimum_weak_domains: int
+    ideal_weak_domains: int
+    authority_evaluation_mode: str
 
 class OverlayRequest(BaseModel):
     urls: list[str] = Field(min_length=1, max_length=20)

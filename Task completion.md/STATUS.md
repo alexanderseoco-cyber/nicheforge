@@ -342,3 +342,11 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Official DataForSEO research recorded Sandbox as free/dummy-data and documented Standard/Live/depth/rate-limit facts. Moz endpoint, quota, KD, batching, and billing details remain UNVERIFIED.
 - No credentials requested or inserted; no live paid API call made.
 - Repository initialized and pushed to the supplied GitHub remote in commit `40d75a1`.
+### Provider Readiness — persisted adaptive authority boundary
+
+- Added persisted Run configuration for minimum/ideal weak domains, authority evaluation mode, and adaptive batch size.
+- Added RunCandidate audit fields for evaluated, cached, fetched, unchecked, confirmed-weak, classification, and threshold values.
+- Wired the canonical evaluator into the persisted pipeline while preserving legacy `required_low_da_count` compatibility.
+- Added migration `d2a1f0c4e7b9` and verified the migration head and restart-compatible schema upgrade.
+- Verification: `52 passed, 1217 warnings`.
+- Still pending in this checkpoint: official DataForSEO Sandbox adapter/contract tests, adaptive cost-preview integration, and expanded persisted recalculation tests for all new fields. Moz remains research-only and unverified; no credentials or paid calls used.

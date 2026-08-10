@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from app.models.entities import AuthorityEvidence, CandidateEntity, CandidateEvent, City, KeywordDifficultyEvidence, ProjectCandidate, Run, RunCandidate, RunCandidateAuthorityEvidence, SearchVolumeEvidence, PopulationEvidence, SerpResultRow, SerpSnapshot
 from app.schemas.domain import ValidationProfile
 from app.services.run_pipeline import execute_run
+from app.services.authority_evaluation import AuthorityEvaluationMode, evaluate_authority
 from app.domain.freshness import FreshnessPolicy
 from datetime import datetime, timezone
 
@@ -18,7 +19,8 @@ def _profile_from_run(run: Run) -> ValidationProfile:
 
 
 def create_recalculation(db, project_id: str, profile: ValidationProfile, parent_run_id: str | None = None, candidate_ids: list[str] | None = None, freshness_policy: FreshnessPolicy = FreshnessPolicy.REUSE_FRESH_ONLY) -> Run:
-    run = Run(project_id=project_id, run_type="RECALCULATION", parent_run_id=parent_run_id, freshness_policy=freshness_policy, min_population=profile.min_population, max_population=profile.max_population, min_search_volume=profile.min_search_volume, da_threshold=profile.da_threshold, required_low_da_count=profile.required_low_da_count, organic_depth=profile.organic_depth, kd_enabled=profile.kd_enabled, kd_provider=profile.kd_provider, kd_threshold=profile.kd_threshold, kd_operator=profile.kd_operator, kd_mode=profile.kd_mode, country_code="US", language_code="en", configuration_snapshot=profile.model_dump(), enabled_gates={"population": True, "search_volume": True, "authority": True})
+    minimum_weak = profile.required_low_da_count
+    run = Run(project_id=project_id, run_type="RECALCULATION", parent_run_id=parent_run_id, freshness_policy=freshness_policy, min_population=profile.min_population, max_population=profile.max_population, min_search_volume=profile.min_search_volume, da_threshold=profile.da_threshold, required_low_da_count=minimum_weak, minimum_weak_domains=minimum_weak, ideal_weak_domains=profile.ideal_weak_domains, authority_evaluation_mode=profile.authority_evaluation_mode, authority_batch_size=profile.authority_batch_size, organic_depth=profile.organic_depth, kd_enabled=profile.kd_enabled, kd_provider=profile.kd_provider, kd_threshold=profile.kd_threshold, kd_operator=profile.kd_operator, kd_mode=profile.kd_mode, country_code="US", language_code="en", configuration_snapshot=profile.model_dump(), enabled_gates={"population": True, "search_volume": True, "authority": True})
     db.add(run); db.commit(); db.refresh(run)
     return run
 
