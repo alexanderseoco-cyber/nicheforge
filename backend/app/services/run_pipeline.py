@@ -146,22 +146,48 @@ async def execute_run(db: Session, run_id: str, project_candidate_ids: list[str]
                     metrics.append(AuthorityResult(row.url, row.root_domain, cached.da, cached.pa, cached.spam_score, cached.linking_root_domains, cached.backlinks, cached.provider, cached.raw_payload)); metric_sources.append((cached, stale_warning, authority_key))
                 else:
                     metrics.append(None); metric_sources.append((None, False, authority_key)); missing.append(AuthorityTarget(row.url, row.root_domain))
-            fetched = await authority_provider().fetch(missing) if missing else []
-            fetched_iter = iter(fetched)
+            # ADAPTIVE authority is deliberately acquired as ordered batches.  A
+            # normal full run still requests the complete unresolved set in one
+            # batch; recalculation therefore never falls through to eager depth.
+            fetched_queue = []
+            unresolved_index = 0
+            adaptive_recalculation = run.run_type == "RECALCULATION" and run.authority_evaluation_mode == "ADAPTIVE"
+            batch_size = max(1, run.authority_batch_size) if adaptive_recalculation else max(1, len(missing))
             available=0; low=0
-            for row, metric, source in zip(rows, metrics, metric_sources):
+            fetched_count = 0
+            observed_metrics = list(metrics)
+            for row_index, (row, metric, source) in enumerate(zip(rows, metrics, metric_sources)):
                 cached, stale_warning, authority_key = source
                 if metric is None:
-                    metric = next(fetched_iter)
-                    ev=AuthorityEvidence(candidate_entity_id=pc.candidate_entity_id, target_url=row.url, root_domain=row.root_domain, target_type="URL", provider=metric.provider, source_kind=metric.provider, da=metric.da, pa=metric.pa, spam_score=metric.spam_score, linking_root_domains=metric.linking_root_domains, backlinks=metric.backlinks, raw_payload=metric.raw or {}, fetched_at=utc_now(), fresh_until=utc_now()+timedelta(days=30)); db.add(ev); db.flush(); db.add(ProviderCache(cache_key=authority_key, provider=ev.provider, operation="authority", evidence_type="authority", evidence_id=ev.id, fetched_at=ev.fetched_at, fresh_until=ev.fresh_until)); _call(db, run, rc, ev.provider, "authority", "fetch", authority_key, "success", ev.source_kind); counters["provider_calls"] += 1
+                    if not fetched_queue:
+                        batch = missing[unresolved_index:unresolved_index + batch_size]
+                        unresolved_index += len(batch)
+                        fetched_queue = list(await authority_provider().fetch(batch))
+                        fetched_count += len(fetched_queue)
+                        counters["provider_calls"] += 1
+                        if fetched_queue:
+                            _call(db, run, rc, fetched_queue[0].provider, "authority", "batch_fetch", f"batch:{unresolved_index // batch_size}", "success", fetched_queue[0].provider)
+                    metric = fetched_queue.pop(0)
+                    observed_metrics[row_index] = metric
+                    ev=AuthorityEvidence(candidate_entity_id=pc.candidate_entity_id, target_url=row.url, root_domain=row.root_domain, target_type="URL", provider=metric.provider, source_kind=metric.provider, da=metric.da, pa=metric.pa, spam_score=metric.spam_score, linking_root_domains=metric.linking_root_domains, backlinks=metric.backlinks, raw_payload=metric.raw or {}, fetched_at=utc_now(), fresh_until=utc_now()+timedelta(days=30)); db.add(ev); db.flush(); db.add(ProviderCache(cache_key=authority_key, provider=ev.provider, operation="authority", evidence_type="authority", evidence_id=ev.id, fetched_at=ev.fetched_at, fresh_until=ev.fresh_until)); counters["provider_calls"] += 1
                 else:
                     ev = cached; _call(db, run, rc, ev.provider, "authority", "reuse", authority_key, "cache_hit", ev.source_kind, True); counters["cache_hits"] += 1
                     if stale_warning: _event(db, rc, "STALE_EVIDENCE_REUSED", refs={"authority_evidence_id": ev.id}, metadata={"freshness_policy": run.freshness_policy, "stage": "authority"})
                 usable=metric.da is not None; available += int(usable); counted=bool(usable and metric.da < run.da_threshold); low += int(counted); db.add(RunCandidateAuthorityEvidence(run_candidate_id=rc.id, serp_result_row_id=row.id, authority_evidence_id=ev.id, ranking_position=row.position, da_value_used=metric.da, counted_as_low_da=counted))
+                if adaptive_recalculation:
+                    probe = evaluate_authority([m.da if m else None for m in observed_metrics], run.organic_depth, run.required_low_da_count, run.ideal_weak_domains, run.da_threshold, AuthorityEvaluationMode.ADAPTIVE, run.adaptive_seek_ideal, row_index + 1, fetched_count)
+                    if probe.primary_gate_result in ("PASS", "PRIMARY_REJECTED"):
+                        break
+            if adaptive_recalculation:
+                # Positions after the stopping point are intentionally unchecked,
+                # even when compatible cache rows existed for them.
+                evaluated_positions = row_index + 1 if rows else 0
+                metrics = observed_metrics[:evaluated_positions] + [None] * max(0, len(rows) - evaluated_positions)
             minimum_weak = run.required_low_da_count
             evaluation = evaluate_authority([metric.da if metric else None for metric in metrics], run.organic_depth, minimum_weak, run.ideal_weak_domains, run.da_threshold, AuthorityEvaluationMode(run.authority_evaluation_mode), run.adaptive_seek_ideal, sum(1 for source in metric_sources if source[0] is not None), len(missing))
             rc.organic_results_evaluated=len(rows); rc.authority_results_available=available; rc.low_da_count=evaluation.confirmed_weak_count; rc.da_threshold_used=run.da_threshold; rc.required_low_da_count_used=minimum_weak; rc.minimum_weak_domains_used=minimum_weak; rc.ideal_weak_domains_used=run.ideal_weak_domains; rc.authority_evaluation_mode_used=run.authority_evaluation_mode; rc.adaptive_seek_ideal_used=run.adaptive_seek_ideal; rc.authority_targets_evaluated=evaluation.authority_targets_evaluated; rc.authority_targets_cached=evaluation.authority_targets_cached; rc.authority_targets_fetched=evaluation.authority_targets_fetched; rc.authority_targets_unchecked=evaluation.unchecked_remaining; rc.confirmed_weak_count=evaluation.confirmed_weak_count; rc.opportunity_classification=evaluation.opportunity_classification
-            if available < len(rows):
+            authority_complete = available == len(rows) or (adaptive_recalculation and evaluation.primary_gate_result != "ERROR_RETRYABLE")
+            if not authority_complete:
                 _set_status(rc, "ERROR_RETRYABLE", "DATA_INCOMPLETE"); counters["authority_incomplete"] += 1
             elif low < minimum_weak:
                 _set_status(rc, "PRIMARY_REJECTED", "LOW_DA_COUNT_BELOW_REQUIRED"); rc.automatic_status="PRIMARY_REJECTED"; rc.primary_gate_passed=False; counters["primary_rejected"] += 1

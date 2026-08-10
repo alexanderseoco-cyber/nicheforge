@@ -386,6 +386,26 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Verified historical parent and recalculation records remain independently persisted.
 - Verification: `60 passed, 1223 warnings`.
 
+### Provider Readiness - adaptive authority continuation refactor
+
+- Recalculation execution now acquires unresolved authority targets in ordered adaptive batches, reuses compatible cached evidence, preserves SERP-to-authority lineage, records one ProviderCall per issued batch, and leaves post-stop positions unchecked.
+- FULL mode continues to acquire the complete unresolved authority depth.
+- Validation: Python compilation and `git diff --check` passed. Targeted pytest execution was unavailable because the project environment has no pytest installation.
+
+### Provider Readiness COMPLETE - final closure
+
+- Persisted authority semantics are DA < 10, 4 weak domains = PASS, and 5+ weak domains = IDEAL; thresholds and mode are Run-snapshotted.
+- ADAPTIVE recalculation is cache-first and acquires only ordered unresolved targets in configured incremental batches. `adaptive_seek_ideal` governs continuation after PASS; batch size is persisted and auditable.
+- FULL mode retains complete-depth authority acquisition. ProviderCall accounting records one call per issued authority batch; cache hits do not create provider calls.
+- SERP-result to authority-evidence lineage remains append-only, with genuinely unchecked positions persisted. Parent Runs remain historical; restart reconstruction and retry/idempotency coverage passed.
+- The 100-candidate deterministic ADAPTIVE-vs-FULL benchmark, Sandbox boundary, Trial guards, Production-disabled guard, and adaptive cost-preview coverage remain passing.
+- DataForSEO Sandbox is network-independent and ready for opt-in smoke use. Trial requires explicit approval, credentials, and budget; Production remains disabled by default. No credentials or live/paid calls were used.
+- Moz contract status remains PARTIALLY_VERIFIED/UNVERIFIED for unresolved endpoint, quota, batching, KD, and billing details; it is not enabled as a live dependency.
+- Migration head: `d2a1f0c4e7b9`.
+- Final validation: project `.venv` Python 3.12.10; targeted `12 passed, 372 warnings`; full suite `61 passed, 1083 warnings`; compilation and `git diff --check` passed.
+- GitHub synchronization: origin is configured, but the validated implementation and status update are currently uncommitted locally and therefore not yet synchronized to GitHub.
+- Remaining Provider Readiness blockers: none substantive. Live provider activation remains intentionally deferred pending verified provider contracts and explicit credentials/approval.
+
 ### Provider Readiness — actual recalculation mode coverage
 
 - Added an actual `recalculate()` integration test covering ADAPTIVE → FULL, seek-ideal snapshot changes, batch-size snapshotting, SERP lineage reuse, and zero additional provider calls when complete evidence exists.
