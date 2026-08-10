@@ -24,6 +24,7 @@ class AuthorityEvaluation:
 def evaluate_authority(da_values: list[float | None], organic_depth: int, minimum_weak_domains: int = 4,
                        ideal_weak_domains: int = 5, da_threshold: float = 10.0,
                        mode: AuthorityEvaluationMode = AuthorityEvaluationMode.ADAPTIVE,
+                       seek_ideal: bool = True,
                        cached_count: int = 0, fetched_count: int = 0) -> AuthorityEvaluation:
     """Evaluate only observed authority values; None positions remain unchecked."""
     values = da_values[:organic_depth] if mode == AuthorityEvaluationMode.FULL else da_values[:organic_depth]
@@ -32,7 +33,7 @@ def evaluate_authority(da_values: list[float | None], organic_depth: int, minimu
         if value is None: continue
         evaluated += 1; weak += int(value < da_threshold)
         remaining = organic_depth - index - 1
-        if weak >= ideal_weak_domains or weak >= minimum_weak_domains and weak + remaining < ideal_weak_domains or weak + remaining < minimum_weak_domains:
+        if (not seek_ideal and weak >= minimum_weak_domains) or weak >= ideal_weak_domains or weak >= minimum_weak_domains and weak + remaining < ideal_weak_domains or weak + remaining < minimum_weak_domains:
             stop_at = index + 1
             if mode == AuthorityEvaluationMode.ADAPTIVE: break
     observed = values[:stop_at] if mode == AuthorityEvaluationMode.ADAPTIVE else values

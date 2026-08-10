@@ -11,6 +11,7 @@ class ValidationProfile(BaseModel):
     ideal_weak_domains: int = 5
     authority_evaluation_mode: str = "ADAPTIVE"
     authority_batch_size: int = 5
+    adaptive_seek_ideal: bool = True
     organic_depth: int = 10
     kd_enabled: bool = True
     kd_provider: str = "moz"

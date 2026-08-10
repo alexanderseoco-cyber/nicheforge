@@ -177,7 +177,7 @@ def create_run(project_id: str, payload: RunCreate, db: Session = Depends(get_db
               min_search_volume=profile.min_search_volume, da_threshold=profile.da_threshold,
               required_low_da_count=profile.minimum_weak_domains, minimum_weak_domains=profile.minimum_weak_domains,
               ideal_weak_domains=profile.ideal_weak_domains, authority_evaluation_mode=profile.authority_evaluation_mode,
-              authority_batch_size=profile.authority_batch_size, organic_depth=profile.organic_depth,
+              authority_batch_size=profile.authority_batch_size, adaptive_seek_ideal=profile.adaptive_seek_ideal, organic_depth=profile.organic_depth,
               kd_enabled=profile.kd_enabled, kd_provider=profile.kd_provider, kd_threshold=profile.kd_threshold, kd_operator=profile.kd_operator, kd_mode=profile.kd_mode,
               country_code="US", language_code="en", configuration_snapshot=profile.model_dump(),
               provider_snapshot={}, freshness_policy_snapshot={}, enabled_gates={"population": True, "search_volume": True, "authority": True})

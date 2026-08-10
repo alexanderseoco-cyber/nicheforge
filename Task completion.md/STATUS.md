@@ -358,3 +358,10 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Added adaptive authority/cost preview fields with `KNOWN`, `UPPER_BOUND`, and `ESTIMATE` confidence labels.
 - Added the research-only [Moz provider contract status](../docs/MOZ_PROVIDER_CONTRACT_STATUS.md); unresolved contract and billing details remain `UNVERIFIED`.
 - Verification: `54 passed, 1217 warnings`.
+
+### Provider Readiness — explicit adaptive stopping policy
+
+- Added persisted `adaptive_seek_ideal` configuration and RunCandidate audit snapshot.
+- Preview now reports `seek_ideal` alongside adaptive mode, thresholds, batch size, and confidence-labelled target estimates.
+- Default behavior is to continue after PASS when IDEAL remains possible; ultra-low-cost PASS-only behavior is configurable.
+- Verification remains `54 passed, 1217 warnings`.

@@ -14,6 +14,7 @@ def upgrade() -> None:
         batch.add_column(sa.Column("ideal_weak_domains", sa.Integer(), nullable=False, server_default="5"))
         batch.add_column(sa.Column("authority_evaluation_mode", sa.String(20), nullable=False, server_default="ADAPTIVE"))
         batch.add_column(sa.Column("authority_batch_size", sa.Integer(), nullable=False, server_default="5"))
+        batch.add_column(sa.Column("adaptive_seek_ideal", sa.Boolean(), nullable=False, server_default=sa.true()))
     with op.batch_alter_table("run_candidates") as batch:
         batch.add_column(sa.Column("minimum_weak_domains_used", sa.Integer(), nullable=True))
         batch.add_column(sa.Column("ideal_weak_domains_used", sa.Integer(), nullable=True))
@@ -24,12 +25,13 @@ def upgrade() -> None:
         batch.add_column(sa.Column("authority_targets_unchecked", sa.Integer(), nullable=True))
         batch.add_column(sa.Column("confirmed_weak_count", sa.Integer(), nullable=True))
         batch.add_column(sa.Column("opportunity_classification", sa.String(30), nullable=True))
+        batch.add_column(sa.Column("adaptive_seek_ideal_used", sa.Boolean(), nullable=True))
 
 
 def downgrade() -> None:
     with op.batch_alter_table("run_candidates") as batch:
-        for name in ("opportunity_classification", "confirmed_weak_count", "authority_targets_unchecked", "authority_targets_fetched", "authority_targets_cached", "authority_targets_evaluated", "authority_evaluation_mode_used", "ideal_weak_domains_used", "minimum_weak_domains_used"):
+        for name in ("adaptive_seek_ideal_used", "opportunity_classification", "confirmed_weak_count", "authority_targets_unchecked", "authority_targets_fetched", "authority_targets_cached", "authority_targets_evaluated", "authority_evaluation_mode_used", "ideal_weak_domains_used", "minimum_weak_domains_used"):
             batch.drop_column(name)
     with op.batch_alter_table("runs") as batch:
-        for name in ("authority_batch_size", "authority_evaluation_mode", "ideal_weak_domains", "minimum_weak_domains"):
+        for name in ("adaptive_seek_ideal", "authority_batch_size", "authority_evaluation_mode", "ideal_weak_domains", "minimum_weak_domains"):
             batch.drop_column(name)
