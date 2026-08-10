@@ -26,3 +26,15 @@ def test_sandbox_has_zero_cost_and_cannot_run_paid_path():
         assert "credentials" in str(exc)
     else:
         raise AssertionError("missing credentials must block paid execution")
+
+
+def test_sandbox_smoke_transport_is_opt_in(monkeypatch):
+    import asyncio
+    provider = DataForSEOSandboxSerpProvider()
+    monkeypatch.delenv("NICHEFORGE_ENABLE_DATAFORSEO_SANDBOX_SMOKE", raising=False)
+    try:
+        asyncio.run(provider.fetch([SerpRequest("term", "Austin, TX")]))
+    except RuntimeError as exc:
+        assert "disabled" in str(exc)
+    else:
+        raise AssertionError("smoke transport must be disabled by default")

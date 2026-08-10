@@ -1,5 +1,6 @@
 from __future__ import annotations
 import base64
+import os
 import httpx
 from app.providers.contracts import (
     KeywordMetricRequest, KeywordMetricResult, SerpRequest, SerpResult, OrganicResult
@@ -95,6 +96,9 @@ class DataForSEOSandboxSerpProvider:
     provider = "dataforseo_sandbox"
     mode = "SANDBOX"
 
+    def __init__(self, transport=None):
+        self.transport = transport
+
     @staticmethod
     def map_response(req: SerpRequest, data: dict) -> SerpResult:
         task = (data.get("tasks") or [{}])[0]
@@ -113,4 +117,14 @@ class DataForSEOSandboxSerpProvider:
                           raw={"mode": "SANDBOX", "response": result})
 
     async def fetch(self, requests: list[SerpRequest]) -> list[SerpResult]:
-        raise RuntimeError("Sandbox transport is not configured; inject an explicit offline/opt-in transport")
+        if os.getenv("NICHEFORGE_ENABLE_DATAFORSEO_SANDBOX_SMOKE") != "1":
+            raise RuntimeError("Sandbox smoke transport is disabled")
+        if self.transport is None:
+            raise RuntimeError("Sandbox transport is not configured")
+        results = []
+        for request in requests:
+            try:
+                results.append(self.map_response(request, await self.transport(request)))
+            except Exception as exc:
+                raise RuntimeError(f"DATAFORSEO_SANDBOX_NETWORK_FAILURE: {exc}") from exc
+        return results

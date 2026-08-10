@@ -365,3 +365,10 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Preview now reports `seek_ideal` alongside adaptive mode, thresholds, batch size, and confidence-labelled target estimates.
 - Default behavior is to continue after PASS when IDEAL remains possible; ultra-low-cost PASS-only behavior is configurable.
 - Verification remains `54 passed, 1217 warnings`.
+
+### Provider Readiness — final deterministic comparison coverage
+
+- Added an opt-in-only Sandbox smoke transport controlled by `NICHEFORGE_ENABLE_DATAFORSEO_SANDBOX_SMOKE=1`; default tests remain offline and deterministic.
+- Added the 100-candidate ADAPTIVE-versus-FULL deterministic comparison. It proves target reduction, IDEAL/PASS/rejection classifications, and truthful unchecked counts.
+- Added smoke-boundary and 100-candidate acceptance tests.
+- Verification: `56 passed, 1217 warnings`.
