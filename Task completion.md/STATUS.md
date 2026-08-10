@@ -378,3 +378,10 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Added explicit remaining Trial budget configuration with exact-boundary enforcement.
 - Added tests for below-budget, exactly-at-budget, above-budget, missing approval/credentials, disabled provider, and historical configuration immutability.
 - Verification: `58 passed, 1217 warnings`.
+
+### Provider Readiness — persisted adaptive matrix
+
+- Added file-backed restart coverage for parent/recalculation Run configuration and RunCandidate adaptive audit fields.
+- Added deterministic threshold, mode, and seek-ideal matrix assertions.
+- Verified historical parent and recalculation records remain independently persisted.
+- Verification: `60 passed, 1223 warnings`.
