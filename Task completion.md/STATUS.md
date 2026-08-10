@@ -350,3 +350,11 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Added migration `d2a1f0c4e7b9` and verified the migration head and restart-compatible schema upgrade.
 - Verification: `52 passed, 1217 warnings`.
 - Still pending in this checkpoint: official DataForSEO Sandbox adapter/contract tests, adaptive cost-preview integration, and expanded persisted recalculation tests for all new fields. Moz remains research-only and unverified; no credentials or paid calls used.
+
+### Provider Readiness — Sandbox boundary and preview
+
+- Added a network-independent DataForSEO Sandbox SERP response mapper with explicit `dataforseo_sandbox` provenance and no implicit transport/fallback.
+- Added Sandbox contract tests for organic filtering, requested depth, provenance, zero-cost mode, and paid-path rejection.
+- Added adaptive authority/cost preview fields with `KNOWN`, `UPPER_BOUND`, and `ESTIMATE` confidence labels.
+- Added the research-only [Moz provider contract status](../docs/MOZ_PROVIDER_CONTRACT_STATUS.md); unresolved contract and billing details remain `UNVERIFIED`.
+- Verification: `54 passed, 1217 warnings`.

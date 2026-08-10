@@ -84,3 +84,33 @@ class DataForSEOSerpProvider:
                     break
             out.append(SerpResult(req.keyword, organic, "dataforseo", raw=result))
         return out
+
+
+class DataForSEOSandboxSerpProvider:
+    """Deterministic Sandbox response mapper.
+
+    Network transport is deliberately injected by callers. This keeps normal
+    tests offline and prevents Sandbox from silently becoming a paid adapter.
+    """
+    provider = "dataforseo_sandbox"
+    mode = "SANDBOX"
+
+    @staticmethod
+    def map_response(req: SerpRequest, data: dict) -> SerpResult:
+        task = (data.get("tasks") or [{}])[0]
+        result = (task.get("result") or [{}])[0]
+        organic = []
+        for item in result.get("items") or []:
+            if item.get("type") != "organic" or not item.get("url"):
+                continue
+            organic.append(OrganicResult(
+                position=int(item.get("rank_absolute") or item.get("rank_group") or len(organic) + 1),
+                title=item.get("title"), url=item["url"],
+            ))
+            if len(organic) >= req.depth:
+                break
+        return SerpResult(req.keyword, organic, DataForSEOSandboxSerpProvider.provider,
+                          raw={"mode": "SANDBOX", "response": result})
+
+    async def fetch(self, requests: list[SerpRequest]) -> list[SerpResult]:
+        raise RuntimeError("Sandbox transport is not configured; inject an explicit offline/opt-in transport")
