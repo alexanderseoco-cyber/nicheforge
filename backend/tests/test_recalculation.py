@@ -83,6 +83,30 @@ async def test_da_only_recalculation_reuses_serp_and_authority_lineage():
 
 
 @pytest.mark.asyncio
+async def test_adaptive_settings_recalculate_end_to_end_without_provider_calls():
+    db, run_a, candidate = seeded_db()
+    from app.services.run_pipeline import execute_run
+    await execute_run(db, run_a.id, [candidate.id])
+    old = db.scalar(select(RunCandidate).where(RunCandidate.run_id == run_a.id))
+    calls_before = db.query(ProviderCall).count()
+    profile = ValidationProfile(min_population=20000, max_population=120000, min_search_volume=0,
+                                da_threshold=10, required_low_da_count=0, ideal_weak_domains=6,
+                                authority_evaluation_mode="FULL", authority_batch_size=8,
+                                adaptive_seek_ideal=False, organic_depth=10, kd_enabled=False)
+    run_b = await recalculate(db, run_a.project_id, profile, parent_run_id=run_a.id, candidate_ids=[candidate.id])
+    new = db.scalar(select(RunCandidate).where(RunCandidate.run_id == run_b.id))
+    assert run_b.parent_run_id == run_a.id
+    assert run_b.authority_evaluation_mode == "FULL" and run_b.authority_batch_size == 8
+    assert not run_b.adaptive_seek_ideal
+    assert old.authority_evaluation_mode_used == "ADAPTIVE"
+    assert new.authority_evaluation_mode_used == "FULL"
+    assert new.adaptive_seek_ideal_used is False
+    assert new.serp_snapshot_id == old.serp_snapshot_id
+    assert db.query(ProviderCall).count() == calls_before
+    assert new.authority_targets_evaluated == 10 and new.authority_targets_unchecked == 0
+
+
+@pytest.mark.asyncio
 async def test_preview_is_strictly_read_only_across_funnel_tables():
     db, run, candidate = seeded_db()
     from app.services.run_pipeline import execute_run

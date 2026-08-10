@@ -386,6 +386,11 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Verified historical parent and recalculation records remain independently persisted.
 - Verification: `60 passed, 1223 warnings`.
 
+### Provider Readiness — actual recalculation mode coverage
+
+- Added an actual `recalculate()` integration test covering ADAPTIVE → FULL, seek-ideal snapshot changes, batch-size snapshotting, SERP lineage reuse, and zero additional provider calls when complete evidence exists.
+- Verification: `61 passed, 1290 warnings`.
+
 ### Provider Readiness — actual recalculation audit integration
 
 - The real `recalculate()` path now snapshots adaptive mode, seek-ideal, thresholds, and audit counts on recalculated RunCandidates.
