@@ -97,3 +97,7 @@ Do not modify `PROJECT_BLUEPRINT.md` merely to accommodate scaffold code. Genuin
 ## Current Reconciliation — Checkpoint F Approved and Closed
 
 Checkpoints A–F are complete and approved. The stale historical checkpoint bullets near the top of this document are superseded by this reconciliation record; no later checkpoint is authorized yet. See `docs/NEXT_PHASE_READINESS_REPORT.md` for the authoritative next-phase review.
+
+## Provider Readiness & Live Integration Boundary
+
+The next authorized checkpoint is provider readiness only. Its credential and paid-call rules are defined in `docs/API_KEYS_AND_PROVIDER_ACCESS_RULES.md`. It must verify official provider contracts, mode separation, budget approval, source-policy selection, adaptive DA semantics, and safe evidence mapping before live calls. No broad paid production run is authorized.

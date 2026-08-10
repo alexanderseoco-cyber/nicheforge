@@ -311,7 +311,9 @@ Configuration:
 
 - `da_threshold` default `10`
 - comparison operator default `<`
-- `required_low_da_count` default `5`
+- `minimum_weak_domains` default `4` (PASS threshold)
+- `ideal_weak_domains` default `5` (5+ IDEAL classification)
+- `authority_evaluation_mode` default `ADAPTIVE`; `FULL` remains configurable
 - `organic_depth` default `10`
 
 Example:
@@ -322,7 +324,9 @@ For DA values:
 
 count where DA < 10 = 6.
 
-With required count 5 -> PASS.
+With minimum weak count 4 -> PASS; with 5 or more weak domains -> IDEAL.
+
+Classification defaults are: 0–3 weak domains `PRIMARY_REJECTED`, 4 `PASS`, and 5+ `IDEAL`. Both thresholds remain configurable and are snapshotted per Run. In `ADAPTIVE` mode, authority evaluation may stop when PASS, IDEAL, or mathematical failure is certain; unchecked positions remain explicitly unevaluated.
 
 The user may change either value.
 

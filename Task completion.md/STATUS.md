@@ -327,4 +327,10 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Final accepted baseline: `47 passed, 1217 warnings in 4.55s`; migration head `5c45b58975e9`.
 - Added `docs/NEXT_PHASE_READINESS_REPORT.md` reconciling Blueprint completion, partial areas, untouched phases, dependencies, technical debt, documentation consistency, and recommended next checkpoint.
 - No next checkpoint has started; recommended next phase is provider-readiness/integration-boundary review.
+- Created `docs/API_KEYS_AND_PROVIDER_ACCESS_RULES.md` as the dedicated credential, provider-mode, cost, paid-call, and DA/adaptive-authority rules artifact.
+- Provider Readiness & Live Integration Boundary is now the active planning checkpoint; no live paid calls are enabled.
+- Recorded API-key/provider access rules in `docs/API_KEYS_AND_PROVIDER_ACCESS_RULES.md`.
+- Recorded approved DA semantics: minimum weak domains `4` = PASS, ideal weak domains `5+` = IDEAL, configurable and Run-snapshotted; adaptive authority mode is planned as the bulk default.
+- Updated `PROJECT.md` and `docs/PROJECT_BLUEPRINT.md` only for this approved architectural change. Existing implementation fields still require the Provider Readiness checkpoint’s migrations and tests before live activation.
+- No credentials were added, no live provider calls were made, and no production paid mode was enabled.
 - Repository initialized and pushed to the supplied GitHub remote in commit `40d75a1`.

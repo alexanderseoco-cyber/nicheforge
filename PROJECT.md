@@ -47,7 +47,9 @@ The default profile reflects the workflow currently being used but is not hard-c
 - Minimum local search volume: `300`
 - User may lower or raise SV before a run or dynamically after results appear
 - Weak-domain DA threshold: `< 10`
-- Required weak domains in organic Top 10: `5`
+- Minimum weak domains in organic Top 10: `4` (PASS)
+- Ideal weak domains in organic Top 10: `5` (IDEAL; 5+ remains IDEAL)
+- Authority evaluation mode: `ADAPTIVE` by default; `FULL` configurable
 - Organic result depth: `10`
 - KD: optional / secondary in initial implementation
 - Keyword Difficulty provider: Moz by default when enabled
@@ -58,7 +60,7 @@ The default profile reflects the workflow currently being used but is not hard-c
 - Low local review counts: supporting signal only
 - Indexed pages, referring domains, backlinks, page authority, spam score, UI/UX, on-page strength and estimated traffic: secondary signals
 
-A candidate may only become an automatic **PASS** when all configured primary gates pass.
+A candidate may only become an automatic **PASS** when all configured primary gates pass. DA classification is `0–3 = PRIMARY_REJECTED`, `4 = PASS`, and `5+ = IDEAL`; minimum and ideal counts are independently configurable and snapshotted per Run.
 
 Keyword Difficulty is keyword-level, provider-specific evidence evaluated after the DA primary gate. Moz KD is the default source and `<15` is the default preferred threshold, but the threshold and mode are user-configurable. In `PRIORITY` mode, KD classifies DA-qualified candidates as `IDEAL` or `ABOVE_PREFERRED` without overriding the decisive DA gate. In `HARD_GATE` mode, candidates at or above the configured threshold may be rejected with `KD_ABOVE_THRESHOLD` only after passing DA. Excellent KD never overrides failed DA.
 
