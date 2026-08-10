@@ -13,6 +13,11 @@ class Settings(BaseSettings):
 
     dataforseo_login: str | None = None
     dataforseo_password: str | None = None
+    dataforseo_mode: str = "SANDBOX"
+    dataforseo_provider_enabled: bool = True
+    dataforseo_trial_approved: bool = False
+    dataforseo_trial_budget: float = 0.0
+    dataforseo_serp_estimated_cost: float = 0.0
 
     moz_api_base_url: str | None = None
     moz_api_token: str | None = None

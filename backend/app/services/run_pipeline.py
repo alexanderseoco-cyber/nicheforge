@@ -37,6 +37,7 @@ def _call(db, run, rc, provider, stage, operation, key, outcome, source_kind, ca
         run_id=run.id, run_candidate_id=rc.id, provider=provider, stage=stage,
         operation=operation, request_cache_key=key, outcome=outcome,
         source_kind=source_kind, cache_hit=cache_hit, actual_cost=cost,
+        execution_mode=(run.configuration_snapshot or {}).get("dataforseo_mode") if provider.startswith("dataforseo") else None,
     ))
 
 

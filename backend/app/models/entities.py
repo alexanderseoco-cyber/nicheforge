@@ -341,6 +341,7 @@ class ProviderCall(Base):
     __tablename__ = "provider_calls"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
     provider: Mapped[str] = mapped_column(String(80), index=True)
+    execution_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
     stage: Mapped[str] = mapped_column(String(60), index=True)
     operation: Mapped[str] = mapped_column(String(100))
     request_cache_key: Mapped[str] = mapped_column(String(128), index=True)

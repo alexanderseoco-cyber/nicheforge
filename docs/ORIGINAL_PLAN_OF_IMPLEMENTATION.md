@@ -7,15 +7,10 @@
 
 ## Checkpoint status
 
-- **Checkpoint A — Foundation:** Complete pending user review; Git baseline is intentionally deferred by explicit user instruction.
-- **Checkpoint B — Evidence:** Complete pending user review.
-- **Checkpoint C — Runs:** Complete pending user review.
-- **Checkpoint D — Pipeline:** Complete pending user review.
-- **Checkpoint E — Recalculation/Ledger:** Complete and user-approved.
-- **Checkpoint F — Imports/Exports/Operational Intake:** Active; CSV-first import/export work and contained timestamp modernization are now authorized. Checkpoint F scope is governed by the approved blueprint additions and remains separate from the validated funnel.
-- **Checkpoint F — Imports/Exports/Operational Intake:** Complete pending user approval; canonical imports, provider-specific evidence, provenance, exports, provider separation, incremental CSV safeguards, and file-backed acceptance are validated. No later checkpoint has started.
-- **Checkpoint F — Import/Export:** Not started.
-- **Checkpoint G — Acceptance:** Not started.
+- **Checkpoints A–F:** Complete and approved. Historical implementation details remain recorded in `Task completion.md/STATUS.md`.
+- **Provider Readiness & Live Integration Boundary:** Complete for the deterministic/mock/Sandbox boundary and approved as the current implementation state.
+- **Live provider activation:** Deferred until current official contracts, credentials, quotas, billing, rate limits, and paid-call approval are verified. Moz remains unverified and is not enabled as a live dependency.
+- **Next authorized work:** Provider-contract verification and safe live-integration preparation only; no broad paid production run is authorized.
 
 This document is the approved implementation plan for Phase 1A and is part of the required NicheForge project workflow.
 
@@ -94,9 +89,9 @@ Return the following and then stop for approval:
 
 Do not modify `PROJECT_BLUEPRINT.md` merely to accommodate scaffold code. Genuine deviations require a proposed and approved ADR.
 
-## Current Reconciliation — Checkpoint F Approved and Closed
+## Current Reconciliation — Provider Readiness Current State
 
-Checkpoints A–F are complete and approved. The stale historical checkpoint bullets near the top of this document are superseded by this reconciliation record; no later checkpoint is authorized yet. See `docs/NEXT_PHASE_READINESS_REPORT.md` for the authoritative next-phase review.
+Checkpoints A–F are complete and approved. Provider Readiness is complete for the deterministic boundary and is the current project state. The stale historical checkpoint entries near the top are superseded by the checkpoint status above; implementation history remains preserved in `Task completion.md/STATUS.md`. Live activation remains deferred pending verified provider contracts and explicit approval.
 
 ## Provider Readiness & Live Integration Boundary
 

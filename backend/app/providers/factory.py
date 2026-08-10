@@ -1,6 +1,7 @@
 from app.core.config import get_settings
 from app.providers.mock import MockSearchVolumeProvider, MockSerpProvider, MockAuthorityProvider
-from app.providers.dataforseo import DataForSEOKeywordProvider, DataForSEOSerpProvider
+from app.providers.dataforseo import DataForSEOKeywordProvider, DataForSEOSerpProvider, DataForSEOSandboxSerpProvider
+from app.providers.runtime_config import DataForSEOConfig, ProviderMode
 from app.providers.moz import MozAuthorizedProvider
 
 
@@ -14,7 +15,11 @@ def search_volume_provider():
 def serp_provider():
     s = get_settings()
     if s.nicheforge_serp_provider == "dataforseo":
-        return DataForSEOSerpProvider(s.dataforseo_login or "", s.dataforseo_password or "")
+        config = DataForSEOConfig.from_settings(s)
+        config.validate_paid_execution(config.standard_serp_cost, s.dataforseo_trial_approved)
+        if config.mode == ProviderMode.SANDBOX:
+            return DataForSEOSandboxSerpProvider()
+        return DataForSEOSerpProvider(s.dataforseo_login or "", s.dataforseo_password or "", mode=config.mode)
     return MockSerpProvider()
 
 

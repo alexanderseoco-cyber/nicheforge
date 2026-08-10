@@ -18,6 +18,14 @@ class DataForSEOConfig:
     credentials_configured: bool = False
     provider_enabled: bool = True
 
+    @classmethod
+    def from_settings(cls, settings):
+        return cls(mode=ProviderMode(settings.dataforseo_mode.upper()),
+                   remaining_trial_budget=settings.dataforseo_trial_budget,
+                   standard_serp_cost=settings.dataforseo_serp_estimated_cost,
+                   credentials_configured=bool(settings.dataforseo_login and settings.dataforseo_password),
+                   provider_enabled=settings.dataforseo_provider_enabled)
+
     def validate_paid_execution(self, estimated_cost: float, approved: bool) -> None:
         if not self.provider_enabled:
             raise ValueError("DataForSEO provider is disabled")

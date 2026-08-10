@@ -1,8 +1,8 @@
 # NicheForge Task Completion Status
 
-**Current phase:** Phase 1A — Durable Mock-Provider Validation Core  
-**Status:** Checkpoint A in progress; paused for review  
-**Last updated:** 2026-08-10
+**Current phase:** Provider Readiness & Live Integration Boundary
+**Status:** Provider Readiness complete; live provider activation intentionally deferred pending verified contracts, credentials, and explicit approval
+**Last updated:** 2026-08-11
 
 ## Workflow rule
 
@@ -17,6 +17,12 @@ Every new change, completed task, milestone, or blocked task must update this st
 The implementation plan and this status file must remain synchronized. A phase may not be marked implemented until its required work and validation are complete.
 
 ## Latest update
+
+- Reconciled the stale status header with the completed Checkpoints Aâ€“F and Provider Readiness history below.
+- No live paid provider execution is authorized. Migration head: `d2a1f0c4e7b9`.
+- Latest recorded validation: project-local Python 3.12.10; full suite `60 passed, 1223 warnings`; compilation and `git diff --check` passed. A later historical entry reports `61 passed, 1290 warnings` for additional recalculation-mode coverage.
+- Remaining work is provider-contract verification before live calls, especially Moz authentication, metrics, KD, quotas, batching, rate limits, and billing.
+- Reconciled plan reference: `docs/ORIGINAL_PLAN_OF_IMPLEMENTATION.md`, Provider Readiness & Live Integration Boundary.
 
 - Recorded the verified Python 3.12 runtime in `PROJECT.md`.
 - Authoritative executable: `D:\Python312\python.exe`.
@@ -386,6 +392,17 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Verified historical parent and recalculation records remain independently persisted.
 - Verification: `60 passed, 1223 warnings`.
 
+### Trial Readiness — complete
+
+- Wired exact DataForSEO location resolution into Trial SERP execution, including cached location reuse and provider `location_code` submission.
+- Trial requests route through the main DataForSEO host, remain isolated from Sandbox, and cannot fall back across modes.
+- Trial responses persist through canonical `SerpSnapshot` and `SerpResultRow` records with explicit `dataforseo_trial` provenance.
+- Trial execution records one linked `ProviderCall` with provider, `TRIAL` mode, operation, Run/RunCandidate linkage, timestamps, estimated cost, returned actual cost, or null actual cost when unavailable.
+- Trial Run pricing and budget context remains in the immutable Run configuration snapshot; later configuration changes do not mutate historical context.
+- Added mocked boundary coverage for exact resolution, cache reuse, Trial host routing, canonical evidence, provenance, ProviderCall linkage/costs, historical snapshots, Sandbox isolation, Production disabling, and no cross-mode fallback.
+- Validation: targeted Trial/provider tests `14 passed`; full mock-provider suite `68 passed, 1087 warnings`; Python compilation and `git diff --check` passed. No real Trial or Production request was made.
+- Reconciled plan reference: Provider Readiness & Live Integration Boundary in `docs/ORIGINAL_PLAN_OF_IMPLEMENTATION.md`.
+
 ### Provider Readiness - adaptive authority continuation refactor
 
 - Recalculation execution now acquires unresolved authority targets in ordered adaptive batches, reuses compatible cached evidence, preserves SERP-to-authority lineage, records one ProviderCall per issued batch, and leaves post-stop positions unchecked.
@@ -416,3 +433,14 @@ The implementation plan and this status file must remain synchronized. A phase m
 - The real `recalculate()` path now snapshots adaptive mode, seek-ideal, thresholds, and audit counts on recalculated RunCandidates.
 - Existing DA-only recalculation tests now verify reused lineage, zero additional ProviderCalls, historical Run immutability, and persisted audit fields.
 - Verification: `60 passed, 1223 warnings`.
+
+### Live Trial validation — complete
+
+- The first real Trial diagnostic reached DataForSEO but returned HTTP 200/API `40501 Invalid Field: 'location_name'`; it cost `$0.00` and is preserved as an auditable invalid, non-reusable snapshot with a failed Trial ProviderCall.
+- Corrected Trial requests to send only the provider-verified `location_code` when available; added exact provider-location cache support for `Salina,Kansas,United States` / `1017623` without embedding Salina-specific production business logic.
+- The second controlled real Trial request for `pest control salina ks` succeeded with HTTP 200/API `20000 Ok`, requested depth 10, and 9 actual organic rows. No tenth row was fabricated.
+- Successful Trial evidence persisted canonically with `dataforseo_trial` provenance, SERP Snapshot ID `340dc635-b1ff-4d8d-bc7d-692cfe3a0aca`, one successful linked ProviderCall `33c23bcd-45c0-4743-9c4a-802b4e175af9`, estimated cost `$0.002`, actual cost `$0.002`, and remaining configured budget `$0.008`.
+- No SV, Moz, Sandbox, Production, or existing `backend/nicheforge.db` access occurred during the successful Trial request. The disposable validation database was `backend/nicheforge_trial.db`.
+- Added regression coverage preventing application-level provider errors from becoming reusable SERP evidence or cache entries.
+- Validation: targeted Trial/location/Sandbox tests `10 passed`; full mock-provider suite `68 passed, 1089 warnings`; no additional live request was made after the successful second request.
+- Reconciled plan reference: Provider Readiness & Live Integration Boundary in `docs/ORIGINAL_PLAN_OF_IMPLEMENTATION.md`.

@@ -5,6 +5,7 @@ import httpx
 from app.providers.contracts import (
     KeywordMetricRequest, KeywordMetricResult, SerpRequest, SerpResult, OrganicResult
 )
+from app.providers.runtime_config import ProviderMode
 
 
 class DataForSEOClient:
@@ -12,12 +13,24 @@ class DataForSEOClient:
         token = base64.b64encode(f"{login}:{password}".encode()).decode()
         self.headers = {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
         self.base_url = base_url.rstrip("/")
+        self.last_http_status: int | None = None
+        self.last_response: dict = {}
 
     async def post(self, path: str, payload: list[dict]) -> dict:
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(self.base_url + path, headers=self.headers, json=payload)
+            self.last_http_status = r.status_code
+            self.last_response = r.json()
             r.raise_for_status()
-            return r.json()
+            return self.last_response
+
+    async def get(self, path: str) -> dict:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.get(self.base_url + path, headers=self.headers)
+            self.last_http_status = r.status_code
+            self.last_response = r.json()
+            r.raise_for_status()
+            return self.last_response
 
 
 class DataForSEOKeywordProvider:
@@ -57,18 +70,34 @@ class DataForSEOKeywordProvider:
 
 
 class DataForSEOSerpProvider:
-    def __init__(self, login: str, password: str):
-        self.client = DataForSEOClient(login, password)
+    def __init__(self, login: str, password: str, mode: ProviderMode = ProviderMode.PRODUCTION,
+                 location_resolver=None, base_url: str = "https://api.dataforseo.com"):
+        if mode == ProviderMode.SANDBOX:
+            raise ValueError("Use DataForSEOSandboxSerpProvider for SANDBOX mode")
+        self.mode = mode
+        self.client = DataForSEOClient(login, password, base_url=base_url)
+        self.location_resolver = location_resolver
 
     async def fetch(self, requests: list[SerpRequest]) -> list[SerpResult]:
         out: list[SerpResult] = []
         for req in requests:
-            payload = [{
+            location_code = None
+            if self.location_resolver is not None:
+                parts = [part.strip() for part in (req.location_name or "").split(",")]
+                if len(parts) < 2:
+                    raise ValueError("Trial SERP requires an exact city and state location")
+                resolved = await self.location_resolver.resolve(parts[0], parts[1])
+                location_code = resolved.code
+            payload_item = {
                 "keyword": req.keyword,
-                "location_name": req.location_name,
                 "language_code": req.language_code,
                 "depth": req.depth,
-            }]
+            }
+            if location_code is not None:
+                payload_item["location_code"] = location_code
+            else:
+                payload_item["location_name"] = req.location_name
+            payload = [payload_item]
             data = await self.client.post("/v3/serp/google/organic/live/regular", payload)
             task = (data.get("tasks") or [{}])[0]
             result = (task.get("result") or [{}])[0]
@@ -83,7 +112,10 @@ class DataForSEOSerpProvider:
                 ))
                 if len(organic) >= req.depth:
                     break
-            out.append(SerpResult(req.keyword, organic, "dataforseo", raw=result))
+            out.append(SerpResult(req.keyword, organic, "dataforseo_trial" if self.mode == ProviderMode.TRIAL else "dataforseo",
+                                  raw={"response": {**result, "status_code": task.get("status_code"),
+                                                     "status_message": task.get("status_message")},
+                                       "cost": task.get("cost")}))
         return out
 
 
