@@ -74,6 +74,12 @@ async def test_da_only_recalculation_reuses_serp_and_authority_lineage():
     assert [(x.ranking_position, x.authority_evidence_id) for x in old_lineage] == [(x.ranking_position, x.authority_evidence_id) for x in new_lineage]
     assert db.query(ProviderCall).count() == calls_before
     assert old.required_low_da_count_used == 11 and new.required_low_da_count_used == 10
+    assert new.minimum_weak_domains_used == 10
+    assert new.ideal_weak_domains_used == profile.ideal_weak_domains
+    assert new.authority_evaluation_mode_used == profile.authority_evaluation_mode
+    assert new.adaptive_seek_ideal_used == profile.adaptive_seek_ideal
+    assert new.authority_targets_evaluated == new.authority_results_available
+    assert new.confirmed_weak_count == new.low_da_count
 
 
 @pytest.mark.asyncio

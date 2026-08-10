@@ -385,3 +385,9 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Added deterministic threshold, mode, and seek-ideal matrix assertions.
 - Verified historical parent and recalculation records remain independently persisted.
 - Verification: `60 passed, 1223 warnings`.
+
+### Provider Readiness — actual recalculation audit integration
+
+- The real `recalculate()` path now snapshots adaptive mode, seek-ideal, thresholds, and audit counts on recalculated RunCandidates.
+- Existing DA-only recalculation tests now verify reused lineage, zero additional ProviderCalls, historical Run immutability, and persisted audit fields.
+- Verification: `60 passed, 1223 warnings`.

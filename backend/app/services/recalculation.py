@@ -78,7 +78,7 @@ async def recalculate(db, project_id: str, profile: ValidationProfile, parent_ru
         kd = db.get(KeywordDifficultyEvidence, prior.keyword_difficulty_evidence_id) if prior.keyword_difficulty_evidence_id else None
         if not sv or not pop or sv.avg_monthly_searches is None:
             continue
-        rc = RunCandidate(run_id=run.id, project_candidate_id=pc.id, population_evidence_id=pop.id, search_volume_evidence_id=sv.id, keyword_difficulty_evidence_id=kd.id if kd else None, serp_snapshot_id=snap.id, da_threshold_used=profile.da_threshold, required_low_da_count_used=profile.required_low_da_count, organic_results_evaluated=profile.organic_depth, kd_value_used=kd.difficulty if kd else None, kd_status=("IDEAL" if kd and kd.difficulty is not None and kd.difficulty < profile.kd_threshold else "ABOVE_PREFERRED") if kd else "MISSING")
+        rc = RunCandidate(run_id=run.id, project_candidate_id=pc.id, population_evidence_id=pop.id, search_volume_evidence_id=sv.id, keyword_difficulty_evidence_id=kd.id if kd else None, serp_snapshot_id=snap.id, da_threshold_used=profile.da_threshold, required_low_da_count_used=profile.required_low_da_count, minimum_weak_domains_used=profile.required_low_da_count, ideal_weak_domains_used=profile.ideal_weak_domains, authority_evaluation_mode_used=profile.authority_evaluation_mode, adaptive_seek_ideal_used=profile.adaptive_seek_ideal, organic_results_evaluated=profile.organic_depth, kd_value_used=kd.difficulty if kd else None, kd_status=("IDEAL" if kd and kd.difficulty is not None and kd.difficulty < profile.kd_threshold else "ABOVE_PREFERRED") if kd else "MISSING")
         db.add(rc); db.flush()
         if pop.population < profile.min_population or pop.population > profile.max_population:
             rc.status="POPULATION_REJECTED"; rc.reason_codes=["POPULATION_BELOW_MIN" if pop.population < profile.min_population else "POPULATION_ABOVE_MAX"]
@@ -88,7 +88,7 @@ async def recalculate(db, project_id: str, profile: ValidationProfile, parent_ru
             rc.status="PRIMARY_REJECTED"; rc.automatic_status="PRIMARY_REJECTED"; rc.primary_gate_passed=False; rc.reason_codes=["KD_ABOVE_THRESHOLD"]
         else:
             selected = lineage[:profile.organic_depth]; available = sum(1 for x in selected if x.da_value_used is not None); low = sum(1 for x in selected if x.da_value_used is not None and x.da_value_used < profile.da_threshold)
-            rc.authority_results_available=available; rc.low_da_count=low
+            rc.authority_results_available=available; rc.low_da_count=low; rc.authority_targets_evaluated=available; rc.authority_targets_cached=len(selected); rc.authority_targets_fetched=0; rc.authority_targets_unchecked=max(0, profile.organic_depth - available); rc.confirmed_weak_count=low; rc.opportunity_classification="IDEAL" if low >= profile.ideal_weak_domains else ("PASS" if low >= profile.required_low_da_count else "FAIL")
             if available < profile.organic_depth:
                 rc.status="ERROR_RETRYABLE"; rc.reason_codes=["DATA_INCOMPLETE"]
             elif low < profile.required_low_da_count:
