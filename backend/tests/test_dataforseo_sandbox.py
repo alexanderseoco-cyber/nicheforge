@@ -38,3 +38,49 @@ def test_sandbox_smoke_transport_is_opt_in(monkeypatch):
         assert "disabled" in str(exc)
     else:
         raise AssertionError("smoke transport must be disabled by default")
+
+
+def test_sandbox_default_transport_uses_sandbox_host_and_canonical_mapper(monkeypatch):
+    import asyncio
+    import httpx
+    from app.providers.dataforseo import DataForSEOSandboxSerpProvider
+
+    captured = {}
+    real_async_client = httpx.AsyncClient
+    async def handler(request):
+        captured["url"] = str(request.url)
+        captured["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"tasks": [{"result": [{"items": [
+            {"type": "paid", "url": "https://ad.example"},
+            {"type": "organic", "rank_absolute": 2, "title": "Sample", "url": "https://sample.example"},
+        ]}]}]})
+
+    monkeypatch.setenv("NICHEFORGE_ENABLE_DATAFORSEO_SANDBOX_SMOKE", "1")
+    monkeypatch.setenv("DATAFORSEO_LOGIN", "login")
+    monkeypatch.setenv("DATAFORSEO_PASSWORD", "password")
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: real_async_client(transport=httpx.MockTransport(handler), **kwargs))
+    result = asyncio.run(DataForSEOSandboxSerpProvider().fetch([SerpRequest("term", "Austin, TX", depth=1)]))[0]
+    assert captured["url"] == "https://sandbox.dataforseo.com/v3/serp/google/organic/live/regular"
+    assert captured["auth"].startswith("Basic ")
+    assert len(result.organic) == 1 and result.provider == "dataforseo_sandbox"
+    assert result.raw["mode"] == "SANDBOX"
+
+
+def test_sandbox_http_diagnostic_redacts_credentials(monkeypatch):
+    import asyncio
+    import httpx
+    from app.providers.dataforseo import DataForSEOSandboxSerpProvider
+    async def handler(request):
+        return httpx.Response(401, json={"status_code": 40203, "status_message": "Authentication failed"})
+    monkeypatch.setenv("NICHEFORGE_ENABLE_DATAFORSEO_SANDBOX_SMOKE", "1")
+    real_async_client = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: real_async_client(transport=httpx.MockTransport(handler), **kwargs))
+    try:
+        asyncio.run(DataForSEOSandboxSerpProvider().fetch([SerpRequest("term", "Austin, TX")]))
+    except RuntimeError as exc:
+        message = str(exc)
+        assert "http_http_status" in message and "40203" in message
+        assert "credentials_exposed=false" in message
+        assert "Authorization" not in message and "login" not in message.lower()
+    else:
+        raise AssertionError("HTTP failure must surface a safe diagnostic")

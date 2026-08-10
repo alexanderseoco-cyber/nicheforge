@@ -97,7 +97,25 @@ class DataForSEOSandboxSerpProvider:
     mode = "SANDBOX"
 
     def __init__(self, transport=None):
-        self.transport = transport
+        self.transport = transport or self._default_transport
+
+    async def _default_transport(self, request: SerpRequest) -> dict:
+        """Opt-in, zero-cost Sandbox live SERP request."""
+        from app.core.config import get_settings
+        settings = get_settings()
+        if not settings.dataforseo_login or not settings.dataforseo_password:
+            raise RuntimeError("DataForSEO Sandbox credentials are not configured")
+        client = DataForSEOClient(
+            settings.dataforseo_login,
+            settings.dataforseo_password,
+            base_url="https://sandbox.dataforseo.com",
+        )
+        return await client.post("/v3/serp/google/organic/live/regular", [{
+            "keyword": request.keyword,
+            "location_name": request.location_name,
+            "language_code": request.language_code,
+            "depth": request.depth,
+        }])
 
     @staticmethod
     def map_response(req: SerpRequest, data: dict) -> SerpResult:
@@ -125,6 +143,43 @@ class DataForSEOSandboxSerpProvider:
         for request in requests:
             try:
                 results.append(self.map_response(request, await self.transport(request)))
+            except httpx.HTTPStatusError as exc:
+                body_status = "unavailable"
+                body_message = "unavailable"
+                try:
+                    payload = exc.response.json()
+                    body_status = str(payload.get("status_code", "unavailable"))
+                    body_message = str(payload.get("status_message", "unavailable"))
+                except (ValueError, TypeError):
+                    pass
+                raise RuntimeError(
+                    "DATAFORSEO_SANDBOX_NETWORK_FAILURE: "
+                    f"category=http_http_status; exception_type={type(exc).__name__}; "
+                    f"exception_message={exc.response.status_code} {exc.response.reason_phrase}; "
+                    f"http_status={exc.response.status_code}; response_received=true; "
+                    f"json_parsed={body_status != 'unavailable'}; "
+                    f"api_status_code={body_status}; api_status_message={body_message}; "
+                    "canonical_mapping_reached=false; credentials_exposed=false"
+                ) from exc
+            except httpx.TimeoutException as exc:
+                raise RuntimeError(
+                    "DATAFORSEO_SANDBOX_NETWORK_FAILURE: "
+                    f"category=timeout; exception_type={type(exc).__name__}; "
+                    f"exception_message={type(exc).__name__}; response_received=false; "
+                    "json_parsed=false; canonical_mapping_reached=false; credentials_exposed=false"
+                ) from exc
+            except httpx.ConnectError as exc:
+                raise RuntimeError(
+                    "DATAFORSEO_SANDBOX_NETWORK_FAILURE: "
+                    f"category=network; exception_type={type(exc).__name__}; "
+                    f"exception_message={type(exc).__name__}; response_received=false; "
+                    "json_parsed=false; canonical_mapping_reached=false; credentials_exposed=false"
+                ) from exc
             except Exception as exc:
-                raise RuntimeError(f"DATAFORSEO_SANDBOX_NETWORK_FAILURE: {exc}") from exc
+                raise RuntimeError(
+                    "DATAFORSEO_SANDBOX_NETWORK_FAILURE: "
+                    f"category=local_or_response; exception_type={type(exc).__name__}; "
+                    f"exception_message={type(exc).__name__}; response_received=unknown; "
+                    "json_parsed=unknown; canonical_mapping_reached=unknown; credentials_exposed=false"
+                ) from exc
         return results
