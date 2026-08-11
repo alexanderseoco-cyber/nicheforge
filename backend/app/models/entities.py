@@ -294,6 +294,42 @@ class SerpResultRow(Base):
     raw_row: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class SerpProxyEvaluation(Base):
+    __tablename__ = "serp_proxy_evaluations"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    serp_snapshot_id: Mapped[str] = mapped_column(ForeignKey("serp_snapshots.id"), unique=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    evaluation_version: Mapped[str] = mapped_column(String(80), default="serp_proxy_v1")
+    calibration_version: Mapped[str] = mapped_column(String(80), default="UNCALIBRATED_HIGH_RECALL")
+    organic_positions_available: Mapped[int] = mapped_column(Integer, default=0)
+    likely_weak_count: Mapped[int] = mapped_column(Integer, default=0)
+    possible_weak_count: Mapped[int] = mapped_column(Integer, default=0)
+    unlikely_weak_count: Mapped[int] = mapped_column(Integer, default=0)
+    unknown_missing_count: Mapped[int] = mapped_column(Integer, default=0)
+    minimum_possible_weak: Mapped[int] = mapped_column(Integer, default=0)
+    maximum_plausible_weak: Mapped[int] = mapped_column(Integer, default=0)
+    required_weak_count: Mapped[int] = mapped_column(Integer, default=4)
+    classification: Mapped[str] = mapped_column(String(50))
+    reason: Mapped[str] = mapped_column(String(2000))
+    uncertainty: Mapped[str] = mapped_column(String(100))
+    recommended_action: Mapped[str] = mapped_column(String(100))
+    position_evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class SerpManualMozValidation(Base):
+    __tablename__ = "serp_manual_moz_validations"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    serp_snapshot_id: Mapped[str] = mapped_column(ForeignKey("serp_snapshots.id"), index=True)
+    candidate_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    positions_checked: Mapped[int] = mapped_column(Integer, default=0)
+    moz_da_by_position: Mapped[dict] = mapped_column(JSON, default=dict)
+    actual_da_below_10_count: Mapped[int] = mapped_column(Integer, default=0)
+    result: Mapped[str] = mapped_column(String(30))
+    provenance: Mapped[str] = mapped_column(String(40), default="manual_moz")
+    validated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class AuthorityEvidence(Base):
     __tablename__ = "authority_evidence"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
