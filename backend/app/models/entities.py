@@ -326,6 +326,9 @@ class SerpManualMozValidation(Base):
     moz_da_by_position: Mapped[dict] = mapped_column(JSON, default=dict)
     actual_da_below_10_count: Mapped[int] = mapped_column(Integer, default=0)
     result: Mapped[str] = mapped_column(String(30))
+    validation_status: Mapped[str] = mapped_column(String(30), default="INCOMPLETE")
+    unavailable_positions: Mapped[list] = mapped_column(JSON, default=list)
+    mismatched_domains: Mapped[dict] = mapped_column(JSON, default=dict)
     provenance: Mapped[str] = mapped_column(String(40), default="manual_moz")
     validated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

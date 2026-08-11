@@ -23,7 +23,7 @@ def upgrade():
         sa.Column("id", sa.String(), primary_key=True), sa.Column("serp_snapshot_id", sa.String(), sa.ForeignKey("serp_snapshots.id"), nullable=False),
         sa.Column("candidate_id", sa.String(), nullable=True), sa.Column("positions_checked", sa.Integer(), nullable=False),
         sa.Column("moz_da_by_position", sa.JSON(), nullable=False), sa.Column("actual_da_below_10_count", sa.Integer(), nullable=False),
-        sa.Column("result", sa.String(30), nullable=False), sa.Column("provenance", sa.String(40), nullable=False), sa.Column("validated_at", sa.DateTime(), nullable=False))
+        sa.Column("result", sa.String(30), nullable=False), sa.Column("validation_status", sa.String(30), nullable=False), sa.Column("unavailable_positions", sa.JSON(), nullable=False), sa.Column("mismatched_domains", sa.JSON(), nullable=False), sa.Column("provenance", sa.String(40), nullable=False), sa.Column("validated_at", sa.DateTime(), nullable=False))
 
 def downgrade():
     op.drop_table("serp_manual_moz_validations")
