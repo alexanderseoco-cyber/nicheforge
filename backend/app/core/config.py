@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     dataforseo_backlink_estimated_cost: float = 0.0
     dataforseo_backlink_budget: float = 0.0
     dataforseo_backlink_batch_size: int = 1000
+    census_api_key: str | None = None
+    census_api_enabled: bool = False
+    census_api_base_url: str = "https://api.census.gov"
 
 
 @lru_cache
