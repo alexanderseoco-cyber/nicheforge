@@ -38,4 +38,4 @@ def authority_provider():
 
 def ahrefs_proxy_provider():
     s = get_settings()
-    return AhrefsDomainRatingProvider(s.ahrefs_api_key or "", s.ahrefs_api_base_url, s.ahrefs_domain_rating_path)
+    return AhrefsDomainRatingProvider(s.ahrefs_api_key or "", s.ahrefs_api_base_url, s.ahrefs_domain_rating_path, s.ahrefs_proxy_enabled, s.ahrefs_live_approved)

@@ -20,7 +20,7 @@ def test_ahrefs_proxy_contract_mapping_and_identity(monkeypatch):
             return Response()
 
     monkeypatch.setattr("app.providers.ahrefs.httpx.AsyncClient", lambda timeout: Client())
-    result = asyncio.run(AhrefsDomainRatingProvider("test-key").fetch([AuthorityTarget("https://www.example.com/a", "example.com")]))[0]
+    result = asyncio.run(AhrefsDomainRatingProvider("test-key", enabled=True, live_approved=True).fetch([AuthorityTarget("https://www.example.com/a", "example.com")]))[0]
     assert result.provider == "ahrefs"
     assert result.metric == "domain_rating"
     assert result.domain_rating == 8.5
@@ -44,3 +44,39 @@ def test_proxy_review_preserves_false_negative_safety():
     assert result.classification == "PROXY_REVIEW"
     assert result.why_not_rejected
     assert result.recommended_action == "MANUAL_MOZ_VALIDATION"
+
+
+def test_ahrefs_network_is_disabled_by_default_before_transport(monkeypatch):
+    class NeverClient:
+        def __init__(self, *args, **kwargs): raise AssertionError("transport must not be constructed")
+    monkeypatch.setattr("app.providers.ahrefs.httpx.AsyncClient", NeverClient)
+    provider = AhrefsDomainRatingProvider("test-key")
+    try:
+        asyncio.run(provider.fetch([AuthorityTarget("https://example.com", "example.com")]))
+    except RuntimeError as exc:
+        assert "AHREFS_PROXY_ENABLED" in str(exc)
+    else:
+        raise AssertionError("disabled Ahrefs execution was not blocked")
+
+
+def test_ahrefs_missing_key_is_rejected_before_transport():
+    try:
+        AhrefsDomainRatingProvider("")
+    except ValueError as exc:
+        assert "API key" in str(exc)
+    else:
+        raise AssertionError("missing Ahrefs key was not rejected")
+
+
+def test_ahrefs_requires_explicit_live_approval():
+    provider = AhrefsDomainRatingProvider("test-key", enabled=True, live_approved=False)
+    try:
+        provider.validate_live_execution()
+    except RuntimeError as exc:
+        assert "AHREFS_LIVE_APPROVED" in str(exc)
+    else:
+        raise AssertionError("unapproved Ahrefs execution was not blocked")
+
+
+def test_ahrefs_approved_boundary_validates_without_network():
+    AhrefsDomainRatingProvider("test-key", enabled=True, live_approved=True).validate_live_execution()

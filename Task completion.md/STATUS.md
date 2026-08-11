@@ -413,6 +413,13 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Validation: targeted tests `13 passed`; full mock suite `71 passed, 1089 warnings`; compilation and `git diff --check` passed. No live Ahrefs, Moz, or additional DataForSEO request was made.
 - Remaining boundary: live Ahrefs smoke testing requires separate API-key configuration and explicit authorization.
 
+### Ahrefs live execution guard - complete
+
+- Enforced `AHREFS_PROXY_ENABLED` and explicit `AHREFS_LIVE_APPROVED` checks before Ahrefs transport construction.
+- Missing credentials, disabled proxy, and missing approval now fail before network execution; defaults remain false.
+- Added mocked disabled, missing-key, unapproved, and approved-boundary tests.
+- No `.env` changes and no live Ahrefs, Moz, or DataForSEO requests were made.
+
 ### Ahrefs DR Proxy Pipeline - implementation approved, not started
 
 - Recorded the approved additive Ahrefs DR high-recall proxy scope in `Ahref DR Pipelne.md`.

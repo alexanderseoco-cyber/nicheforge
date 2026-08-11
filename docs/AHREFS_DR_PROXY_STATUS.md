@@ -14,6 +14,8 @@ Official source: [Ahrefs Domain Rating free API](https://docs.ahrefs.com/en/api/
 - Attribution: `Domain Rating by Ahrefs` with an Ahrefs link wherever DR is displayed
 - No API key is configured by this implementation pass
 - No live Ahrefs request has been made
+- Network execution requires both `AHREFS_PROXY_ENABLED=true` and `AHREFS_LIVE_APPROVED=true`
+- Missing `AHREFS_API_KEY`, disabled proxy, or missing live approval blocks before transport
 
 ## Implemented boundary
 

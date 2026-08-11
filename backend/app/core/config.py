@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     ahrefs_api_base_url: str = "https://api.ahrefs.com"
     ahrefs_domain_rating_path: str = "/v3/public/domain-rating-free"
     ahrefs_proxy_enabled: bool = False
+    ahrefs_live_approved: bool = False
 
 
 @lru_cache
