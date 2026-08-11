@@ -9,6 +9,7 @@ from app.providers.contracts import AuthorityTarget
 from app.providers.dataforseo_backlinks import DataForSEOBacklinkSummaryProvider
 from app.services.identity import canonical_identity, identity_key
 from app.services.proxy_authority import enrich_backlink_features
+from app.services.calibration_selector import select_calibration_sample
 
 
 def test_dataforseo_backlink_provider_maps_one_response_to_multiple_features(monkeypatch):
@@ -55,6 +56,24 @@ def test_dataforseo_backlink_guard_blocks_before_transport():
         assert "DATAFORSEO_BACKLINK_PROXY_ENABLED" in str(exc)
     else:
         raise AssertionError("backlink enrichment was not blocked")
+
+
+def test_calibration_selector_deduplicates_and_prioritizes_disagreement_without_network():
+    engine = create_engine("sqlite:///:memory:"); Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        rows = [SerpResultRow(snapshot_id="s", position=i, url=f"https://{domain}/", root_domain=domain) for i, domain in enumerate(("weak-example.com", "strong-example.com", "border-example.com", "weak-example.com"), 1)]
+        db.add_all(rows)
+        db.add_all([
+            __import__("app.models.entities", fromlist=["ProxyAuthorityEvidence"]).ProxyAuthorityEvidence(root_domain="weak-example.com", target_url="https://weak-example.com", domain_rating=3.0, fetched_at=__import__("datetime").datetime.utcnow()),
+            __import__("app.models.entities", fromlist=["ProxyAuthorityEvidence"]).ProxyAuthorityEvidence(root_domain="strong-example.com", target_url="https://strong-example.com", domain_rating=75.0, fetched_at=__import__("datetime").datetime.utcnow()),
+            __import__("app.models.entities", fromlist=["ProxyAuthorityEvidence"]).ProxyAuthorityEvidence(root_domain="border-example.com", target_url="https://border-example.com", domain_rating=25.0, fetched_at=__import__("datetime").datetime.utcnow()),
+            ProxyBacklinkFeatureEvidence(target_domain="weak-example.com", rank=283, mapping_status="mapped"),
+        ])
+        db.commit()
+        result = select_calibration_sample(db, rows, limit=3)
+        assert [item.domain for item in result] == ["weak-example.com", "border-example.com", "strong-example.com"]
+        assert result[0].disagreement is True
+        assert len({item.domain for item in result}) == 3
 
 
 def test_dataforseo_backlink_budget_guard_blocks_over_budget():

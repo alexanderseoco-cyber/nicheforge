@@ -112,10 +112,12 @@ async def enrich_backlink_features(db: Session, run: Run, rc: RunCandidate,
     evidence_by_domain: dict[str, ProxyBacklinkFeatureEvidence] = {}
     missing: list[AuthorityTarget] = []
     cache_keys: dict[str, str] = {}
+    cache_records: dict[str, ProviderCache | None] = {}
     for domain, row in unique.items():
         key = provider_cache_key("dataforseo", "proxy_backlink_features", root_domain=domain, operation="backlinks_bulk_pages_summary_live")
         cache_keys[domain] = key
         cache = db.scalar(select(ProviderCache).where(ProviderCache.cache_key == key))
+        cache_records[domain] = cache
         evidence = db.get(ProxyBacklinkFeatureEvidence, cache.evidence_id) if cache and cache.evidence_type == "proxy_backlink_features" else None
         if evidence and evidence.mapping_status == "mapped" and not force_refresh and evidence_is_fresh(cache.fresh_until):
             evidence_by_domain[domain] = evidence
@@ -129,11 +131,12 @@ async def enrich_backlink_features(db: Session, run: Run, rc: RunCandidate,
             fetched = _now(); fresh_until = fetched + timedelta(days=30)
             evidence = ProxyBacklinkFeatureEvidence(target_domain=target.root_domain, provider="dataforseo", operation=provider.operation, rank=result.rank, backlinks=result.backlinks, referring_domains=result.referring_domains, referring_main_domains=result.referring_main_domains, referring_ips=result.referring_ips, referring_subnets=result.referring_subnets, referring_domains_nofollow=result.referring_domains_nofollow, referring_main_domains_nofollow=result.referring_main_domains_nofollow, backlinks_spam_score=result.backlinks_spam_score, raw_payload={"item": getattr(result, "raw", None) or {}, "response": getattr(result, "response_raw", None) or {}}, request_metadata={"endpoint": provider.endpoint, "feature_set_version": "dataforseo_backlink_v1"}, fetched_at=fetched, fresh_until=fresh_until, actual_cost=result.actual_cost, api_status_code=result.api_status_code, api_status_message=result.api_status_message, mapping_status=getattr(result, "mapping_status", "mapped"), mapping_error=getattr(result, "mapping_error", None))
             db.add(evidence); db.flush(); evidence_by_domain[target.root_domain] = evidence
-            if cache:
-                cache.evidence_id = evidence.id
-                cache.fetched_at = fetched
-                cache.fresh_until = fresh_until
-                cache.status = "usable" if evidence.mapping_status == "mapped" else "invalid"
+            existing_cache = cache_records[target.root_domain]
+            if existing_cache:
+                existing_cache.evidence_id = evidence.id
+                existing_cache.fetched_at = fetched
+                existing_cache.fresh_until = fresh_until
+                existing_cache.status = "usable" if evidence.mapping_status == "mapped" else "invalid"
             else:
                 db.add(ProviderCache(cache_key=cache_keys[target.root_domain], provider="dataforseo", operation=provider.operation, evidence_type="proxy_backlink_features", evidence_id=evidence.id, fetched_at=fetched, fresh_until=fresh_until))
         actual_cost = next((item.actual_cost for item in results if item.actual_cost is not None), None)
