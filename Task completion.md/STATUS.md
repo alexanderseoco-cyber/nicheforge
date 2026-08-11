@@ -477,3 +477,10 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Added regression coverage preventing application-level provider errors from becoming reusable SERP evidence or cache entries.
 - Validation: targeted Trial/location/Sandbox tests `10 passed`; full mock-provider suite `68 passed, 1089 warnings`; no additional live request was made after the successful second request.
 - Reconciled plan reference: Provider Readiness & Live Integration Boundary in `docs/ORIGINAL_PLAN_OF_IMPLEMENTATION.md`.
+# DataForSEO backlink mapper repair
+
+- Confirmed the live schema uses `tasks[0].result[0].items[].url`, not `item.target`.
+- Added URL/root-domain mapping, null-preserving feature extraction, mapping status/error fields, and sanitized raw-response persistence.
+- Added regression coverage for multi-target mapping, missing items, cost propagation, and cache/provider-call behavior.
+- Reclassified the original five paid evidence rows as `unrecoverable_raw_missing` because their raw response was not persisted; original ProviderCall and `$0.02418` actual cost remain unchanged.
+- No additional DataForSEO, Ahrefs, Moz, SERP, or SV requests were made.

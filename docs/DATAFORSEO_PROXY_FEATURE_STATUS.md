@@ -22,3 +22,19 @@ DataForSEO backlink features are separate from both Ahrefs DR and Moz DA. They a
 No live backlink request has been made. The adapter requires both `DATAFORSEO_BACKLINK_PROXY_ENABLED=true` and `DATAFORSEO_BACKLINK_LIVE_APPROVED=true` before transport.
 
 The calibration target remains `P(Moz DA < 10)`. No DR-to-DA formula or provider substitution is implemented.
+# Mapper and raw-response observability
+
+The Bulk Pages Summary response is mapped from `tasks[0].result[0].items[]`. The
+target identity is `item.url` (normalized to the root domain); `item.target` is
+not part of the documented live response shape. Core metrics are copied only
+when present, and missing values remain null.
+
+Each persisted feature evidence row records `mapping_status` and
+`mapping_error`. Successful live responses also retain a sanitized provider
+response envelope and the mapped item, excluding transport headers and
+credentials. Mapping failures are not treated as valid reusable evidence.
+
+The first five-domain live experiment predated raw-response persistence. Its
+ProviderCall and actual cost (`$0.02418`) are preserved, while its five feature
+rows are marked `unrecoverable_raw_missing`; no second provider request was
+made.

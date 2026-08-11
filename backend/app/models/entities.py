@@ -366,6 +366,8 @@ class ProxyBacklinkFeatureEvidence(Base):
     actual_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
     api_status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     api_status_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    mapping_status: Mapped[str] = mapped_column(String(40), default="mapped")
+    mapping_error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
 
 class ProxyCalibrationObservation(Base):

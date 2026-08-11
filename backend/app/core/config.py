@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     dataforseo_backlink_proxy_enabled: bool = False
     dataforseo_backlink_live_approved: bool = False
     dataforseo_backlink_estimated_cost: float = 0.0
+    dataforseo_backlink_budget: float = 0.0
     dataforseo_backlink_batch_size: int = 1000
 
 

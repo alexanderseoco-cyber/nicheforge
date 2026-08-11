@@ -104,3 +104,6 @@ class BacklinkFeatureResult:
     actual_cost: float | None = None
     api_status_code: int | None = None
     api_status_message: str | None = None
+    response_raw: Any = None
+    mapping_status: str = "mapped"
+    mapping_error: str | None = None

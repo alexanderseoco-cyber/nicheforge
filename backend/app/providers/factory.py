@@ -44,4 +44,4 @@ def ahrefs_proxy_provider():
 
 def dataforseo_backlink_proxy_provider():
     s = get_settings()
-    return DataForSEOBacklinkSummaryProvider(s.dataforseo_login or "", s.dataforseo_password or "", s.dataforseo_backlink_proxy_enabled, s.dataforseo_backlink_live_approved, s.dataforseo_backlink_estimated_cost, s.dataforseo_backlink_batch_size)
+    return DataForSEOBacklinkSummaryProvider(s.dataforseo_login or "", s.dataforseo_password or "", s.dataforseo_backlink_proxy_enabled, s.dataforseo_backlink_live_approved, s.dataforseo_backlink_estimated_cost, s.dataforseo_backlink_batch_size, s.dataforseo_backlink_budget)
