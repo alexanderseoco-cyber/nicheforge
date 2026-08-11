@@ -70,7 +70,7 @@ async def evaluate_run_candidate_proxy(db: Session, run: Run, rc: RunCandidate,
         key = provider_cache_key("ahrefs", "domain_rating", root_domain=domain)
         cache = db.scalar(select(ProviderCache).where(ProviderCache.cache_key == key))
         evidence = db.get(ProxyAuthorityEvidence, cache.evidence_id) if cache and cache.evidence_type == "proxy_authority" else None
-        if evidence and not force_refresh and evidence_is_fresh(cache.fresh_until):
+        if evidence and evidence.mapping_status == "mapped" and not force_refresh and evidence_is_fresh(cache.fresh_until):
             ratings.append(evidence.domain_rating); cached_count += 1; continue
         result: ProxyAuthorityResult = (await ahrefs_proxy_provider().fetch([AuthorityTarget(row.url, domain)]))[0]
         evidence = ProxyAuthorityEvidence(target_url=row.url, root_domain=domain, provider="ahrefs", metric="domain_rating", domain_rating=result.domain_rating, source_kind="ahrefs_api", raw_payload=result.raw or {}, request_metadata={"endpoint": "/v3/public/domain-rating-free"}, fetched_at=_now(), fresh_until=_now() + timedelta(days=30))
@@ -117,7 +117,7 @@ async def enrich_backlink_features(db: Session, run: Run, rc: RunCandidate,
         cache_keys[domain] = key
         cache = db.scalar(select(ProviderCache).where(ProviderCache.cache_key == key))
         evidence = db.get(ProxyBacklinkFeatureEvidence, cache.evidence_id) if cache and cache.evidence_type == "proxy_backlink_features" else None
-        if evidence and not force_refresh and evidence_is_fresh(cache.fresh_until):
+        if evidence and evidence.mapping_status == "mapped" and not force_refresh and evidence_is_fresh(cache.fresh_until):
             evidence_by_domain[domain] = evidence
         else:
             missing.append(AuthorityTarget(row.url, domain))
@@ -129,7 +129,13 @@ async def enrich_backlink_features(db: Session, run: Run, rc: RunCandidate,
             fetched = _now(); fresh_until = fetched + timedelta(days=30)
             evidence = ProxyBacklinkFeatureEvidence(target_domain=target.root_domain, provider="dataforseo", operation=provider.operation, rank=result.rank, backlinks=result.backlinks, referring_domains=result.referring_domains, referring_main_domains=result.referring_main_domains, referring_ips=result.referring_ips, referring_subnets=result.referring_subnets, referring_domains_nofollow=result.referring_domains_nofollow, referring_main_domains_nofollow=result.referring_main_domains_nofollow, backlinks_spam_score=result.backlinks_spam_score, raw_payload={"item": getattr(result, "raw", None) or {}, "response": getattr(result, "response_raw", None) or {}}, request_metadata={"endpoint": provider.endpoint, "feature_set_version": "dataforseo_backlink_v1"}, fetched_at=fetched, fresh_until=fresh_until, actual_cost=result.actual_cost, api_status_code=result.api_status_code, api_status_message=result.api_status_message, mapping_status=getattr(result, "mapping_status", "mapped"), mapping_error=getattr(result, "mapping_error", None))
             db.add(evidence); db.flush(); evidence_by_domain[target.root_domain] = evidence
-            db.add(ProviderCache(cache_key=cache_keys[target.root_domain], provider="dataforseo", operation=provider.operation, evidence_type="proxy_backlink_features", evidence_id=evidence.id, fetched_at=fetched, fresh_until=fresh_until))
+            if cache:
+                cache.evidence_id = evidence.id
+                cache.fetched_at = fetched
+                cache.fresh_until = fresh_until
+                cache.status = "usable" if evidence.mapping_status == "mapped" else "invalid"
+            else:
+                db.add(ProviderCache(cache_key=cache_keys[target.root_domain], provider="dataforseo", operation=provider.operation, evidence_type="proxy_backlink_features", evidence_id=evidence.id, fetched_at=fetched, fresh_until=fresh_until))
         actual_cost = next((item.actual_cost for item in results if item.actual_cost is not None), None)
         mapping_failed = any(getattr(result, "mapping_status", "mapped") != "mapped" for result in results)
         db.add(ProviderCall(provider="dataforseo", stage="proxy_authority_enrichment", operation=provider.operation, request_cache_key=provider_cache_key("dataforseo", "proxy_backlink_batch", targets=sorted(cache_keys)), outcome="mapping_failure" if mapping_failed else "success", cache_hit=False, source_kind="dataforseo_backlinks", units=None, started_at=batch_fetched, finished_at=_now(), estimated_cost=provider.estimated_cost, actual_cost=actual_cost, run_id=run.id, run_candidate_id=rc.id, error_category="mapping" if mapping_failed else None, error_message="One or more target results lacked documented core backlink fields" if mapping_failed else None))

@@ -84,9 +84,16 @@ def test_backlink_features_are_separate_and_cacheable(monkeypatch):
         pc = ProjectCandidate(project_id=project.id, candidate_entity_id=entity.id, display_keyword=entity.canonical_keyword); db.add(pc); db.flush()
         run = Run(project_id=project.id, run_type="PROXY", min_population=1, max_population=100000, min_search_volume=0, da_threshold=10, required_low_da_count=4, organic_depth=1); db.add(run); db.flush(); rc = RunCandidate(run_id=run.id, project_candidate_id=pc.id); db.add(rc); db.flush()
         snap = SerpSnapshot(candidate_id="pipeline", candidate_entity_id=entity.id, provider="mock", source_kind="mock", keyword=entity.canonical_keyword, location_name="Salina, KS", requested_depth=1); db.add(snap); db.flush(); row = SerpResultRow(snapshot_id=snap.id, position=1, url="https://example.com/page", root_domain="example.com"); db.add(row); db.commit()
-        first = asyncio.run(enrich_backlink_features(db, run, rc, [row])); second = asyncio.run(enrich_backlink_features(db, run, rc, [row]))
-        assert provider.calls == 1
-        assert first[0].id == second[0].id
-        assert first[0].provider == "dataforseo" and first[0].rank == 99
-        assert db.query(ProviderCall).filter_by(provider="dataforseo").count() == 1
-        assert db.query(ProxyBacklinkFeatureEvidence).count() == 1
+        first = asyncio.run(enrich_backlink_features(db, run, rc, [row]))
+        first[0].mapping_status = "unrecoverable_raw_missing"
+        db.commit()
+        second = asyncio.run(enrich_backlink_features(db, run, rc, [row]))
+        third = asyncio.run(enrich_backlink_features(db, run, rc, [row]))
+        cache = db.scalar(select(__import__("app.models.entities", fromlist=["ProviderCache"]).ProviderCache))
+        assert provider.calls == 2
+        assert first[0].id != second[0].id == third[0].id
+        assert cache.evidence_id == second[0].id
+        assert db.get(ProxyBacklinkFeatureEvidence, first[0].id).mapping_status == "unrecoverable_raw_missing"
+        assert second[0].provider == "dataforseo" and second[0].rank == 99
+        assert db.query(ProviderCall).filter_by(provider="dataforseo").count() == 2
+        assert db.query(ProxyBacklinkFeatureEvidence).count() == 2
