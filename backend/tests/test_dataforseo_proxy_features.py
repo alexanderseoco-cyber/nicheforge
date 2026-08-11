@@ -4,12 +4,13 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
-from app.models.entities import City, Project, CandidateEntity, ProjectCandidate, Run, RunCandidate, SerpSnapshot, SerpResultRow, ProviderCall, ProxyBacklinkFeatureEvidence
+from app.models.entities import City, Project, CandidateEntity, ProjectCandidate, Run, RunCandidate, SerpSnapshot, SerpResultRow, ProviderCall, ProviderCache, ProxyBacklinkFeatureEvidence
 from app.providers.contracts import AuthorityTarget
 from app.providers.dataforseo_backlinks import DataForSEOBacklinkSummaryProvider
 from app.services.identity import canonical_identity, identity_key
 from app.services.proxy_authority import enrich_backlink_features
 from app.services.calibration_selector import select_calibration_sample
+from app.services.calibration_consolidation import import_ahrefs_evidence
 
 
 def test_dataforseo_backlink_provider_maps_one_response_to_multiple_features(monkeypatch):
@@ -74,6 +75,22 @@ def test_calibration_selector_deduplicates_and_prioritizes_disagreement_without_
         assert [item.domain for item in result] == ["weak-example.com", "border-example.com", "strong-example.com"]
         assert result[0].disagreement is True
         assert len({item.domain for item in result}) == 3
+
+
+def test_calibration_evidence_import_preserves_provenance_cache_and_avoids_provider_calls():
+    source_engine = create_engine("sqlite:///:memory:"); target_engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(source_engine); Base.metadata.create_all(target_engine)
+    with Session(source_engine) as source, Session(target_engine) as target:
+        observed = __import__("app.models.entities", fromlist=["ProxyAuthorityEvidence"]).ProxyAuthorityEvidence(id="source-evidence", target_url="https://imported.example.com", root_domain="imported.example.com", domain_rating=3.6, source_kind="ahrefs_api", request_metadata={"endpoint": "/v3/public/domain-rating-free"})
+        source.add(observed); source.commit()
+        imported = import_ahrefs_evidence(source, target, "source.db")
+        assert len(imported) == 1
+        assert imported[0].id == "source-evidence"
+        assert imported[0].source_kind == "imported_calibration"
+        assert imported[0].request_metadata["imported_from_database"] == "source.db"
+        assert target.query(ProviderCall).count() == 0
+        assert target.query(ProviderCache).count() == 1
+        assert import_ahrefs_evidence(source, target, "source.db") == []
 
 
 def test_dataforseo_backlink_budget_guard_blocks_over_budget():
