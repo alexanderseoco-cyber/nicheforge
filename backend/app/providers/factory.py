@@ -4,6 +4,7 @@ from app.providers.dataforseo import DataForSEOKeywordProvider, DataForSEOSerpPr
 from app.providers.runtime_config import DataForSEOConfig, ProviderMode
 from app.providers.moz import MozAuthorizedProvider
 from app.providers.ahrefs import AhrefsDomainRatingProvider
+from app.providers.dataforseo_backlinks import DataForSEOBacklinkSummaryProvider
 
 
 def search_volume_provider():
@@ -39,3 +40,8 @@ def authority_provider():
 def ahrefs_proxy_provider():
     s = get_settings()
     return AhrefsDomainRatingProvider(s.ahrefs_api_key or "", s.ahrefs_api_base_url, s.ahrefs_domain_rating_path, s.ahrefs_proxy_enabled, s.ahrefs_live_approved)
+
+
+def dataforseo_backlink_proxy_provider():
+    s = get_settings()
+    return DataForSEOBacklinkSummaryProvider(s.dataforseo_login or "", s.dataforseo_password or "", s.dataforseo_backlink_proxy_enabled, s.dataforseo_backlink_live_approved, s.dataforseo_backlink_estimated_cost, s.dataforseo_backlink_batch_size)

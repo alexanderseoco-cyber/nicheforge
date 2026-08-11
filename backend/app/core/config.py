@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     ahrefs_domain_rating_path: str = "/v3/public/domain-rating-free"
     ahrefs_proxy_enabled: bool = False
     ahrefs_live_approved: bool = False
+    dataforseo_backlink_proxy_enabled: bool = False
+    dataforseo_backlink_live_approved: bool = False
+    dataforseo_backlink_estimated_cost: float = 0.0
+    dataforseo_backlink_batch_size: int = 1000
 
 
 @lru_cache

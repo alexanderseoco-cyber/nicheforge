@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import (
     ManualMozObservation, ProxyAuthorityEvidence, ProxyCalibrationObservation,
-    ProviderCache, ProviderCall, Run, RunCandidate, SerpResultRow,
+    ProxyBacklinkFeatureEvidence, ProviderCache, ProviderCall, Run, RunCandidate, SerpResultRow,
 )
 from app.providers.contracts import AuthorityTarget, ProxyAuthorityResult
-from app.providers.factory import ahrefs_proxy_provider
+from app.providers.factory import ahrefs_proxy_provider, dataforseo_backlink_proxy_provider
 from app.services.cache_keys import evidence_is_fresh, provider_cache_key
 from app.services.normalization import root_domain
 
@@ -98,5 +98,38 @@ def add_manual_moz_observation(db: Session, domain: str, moz_da: float | None,
     db.add(observation); db.flush()
     ahrefs = db.scalar(select(ProxyAuthorityEvidence).where(ProxyAuthorityEvidence.root_domain == normalized).order_by(ProxyAuthorityEvidence.fetched_at.desc()))
     if ahrefs:
-        db.add(ProxyCalibrationObservation(normalized_domain=normalized, ahrefs_dr=ahrefs.domain_rating, moz_da=moz_da, provenance="manual_moz", calibration_version="uncalibrated", source_metadata={"manual_observation_id": observation.id}))
+        db.add(ProxyCalibrationObservation(normalized_domain=normalized, ahrefs_dr=ahrefs.domain_rating, moz_da=moz_da, moz_da_below_10=moz_da < 10 if moz_da is not None else None, provenance="manual_moz", calibration_version="uncalibrated", feature_set_version="ahrefs_dr_v1", source_metadata={"manual_observation_id": observation.id}))
     db.commit(); return observation
+
+
+async def enrich_backlink_features(db: Session, run: Run, rc: RunCandidate,
+                                   rows: Iterable[SerpResultRow], force_refresh: bool = False) -> list[ProxyBacklinkFeatureEvidence]:
+    """Fetch/cache DataForSEO backlink features independently from Moz and Ahrefs DR."""
+    unique: dict[str, SerpResultRow] = {}
+    for row in rows:
+        domain = root_domain(row.url) or row.root_domain
+        unique.setdefault(domain, row)
+    evidence_by_domain: dict[str, ProxyBacklinkFeatureEvidence] = {}
+    missing: list[AuthorityTarget] = []
+    cache_keys: dict[str, str] = {}
+    for domain, row in unique.items():
+        key = provider_cache_key("dataforseo", "proxy_backlink_features", root_domain=domain, operation="backlinks_bulk_pages_summary_live")
+        cache_keys[domain] = key
+        cache = db.scalar(select(ProviderCache).where(ProviderCache.cache_key == key))
+        evidence = db.get(ProxyBacklinkFeatureEvidence, cache.evidence_id) if cache and cache.evidence_type == "proxy_backlink_features" else None
+        if evidence and not force_refresh and evidence_is_fresh(cache.fresh_until):
+            evidence_by_domain[domain] = evidence
+        else:
+            missing.append(AuthorityTarget(row.url, domain))
+    if missing:
+        provider = dataforseo_backlink_proxy_provider()
+        results = await provider.fetch(missing)
+        for target, result in zip(missing, results):
+            fetched = _now(); fresh_until = fetched + timedelta(days=30)
+            evidence = ProxyBacklinkFeatureEvidence(target_domain=target.root_domain, provider="dataforseo", operation=provider.operation, rank=result.rank, backlinks=result.backlinks, referring_domains=result.referring_domains, referring_main_domains=result.referring_main_domains, referring_ips=result.referring_ips, referring_subnets=result.referring_subnets, referring_domains_nofollow=result.referring_domains_nofollow, referring_main_domains_nofollow=result.referring_main_domains_nofollow, backlinks_spam_score=result.backlinks_spam_score, raw_payload=result.raw or {}, request_metadata={"endpoint": provider.endpoint, "feature_set_version": "dataforseo_backlink_v1"}, fetched_at=fetched, fresh_until=fresh_until, actual_cost=result.actual_cost, api_status_code=result.api_status_code, api_status_message=result.api_status_message)
+            db.add(evidence); db.flush(); evidence_by_domain[target.root_domain] = evidence
+            db.add(ProviderCache(cache_key=cache_keys[target.root_domain], provider="dataforseo", operation=provider.operation, evidence_type="proxy_backlink_features", evidence_id=evidence.id, fetched_at=fetched, fresh_until=fresh_until))
+            db.add(ProviderCall(provider="dataforseo", stage="proxy_authority_enrichment", operation=provider.operation, request_cache_key=cache_keys[target.root_domain], outcome="success", cache_hit=False, source_kind="dataforseo_backlinks", units=None, started_at=fetched, finished_at=_now(), estimated_cost=provider.estimated_cost, actual_cost=result.actual_cost, run_id=run.id, run_candidate_id=rc.id))
+    run.proxy_configuration_snapshot = {**(run.proxy_configuration_snapshot or {}), "feature_sources": ["ahrefs.domain_rating", "dataforseo.backlink_summary"], "feature_set_version": "ahrefs_dr_v1+dataforseo_backlink_v1", "reject_audit_percent": run.proxy_reject_audit_percent or 0.0}
+    db.commit()
+    return [evidence_by_domain[domain] for domain in unique]

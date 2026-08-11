@@ -420,6 +420,14 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Added mocked disabled, missing-key, unapproved, and approved-boundary tests.
 - No `.env` changes and no live Ahrefs, Moz, or DataForSEO requests were made.
 
+### DataForSEO proxy backlink enrichment - implementation complete
+
+- Verified and documented the official Bulk Pages Summary Live contract in `docs/DATAFORSEO_PROXY_FEATURE_STATUS.md`.
+- Added separate DataForSEO backlink-feature provider, evidence model, cache identity, cost/API-status fields, and ProviderCall accounting. One response can populate Rank, backlinks, referring-domain, IP/subnet, nofollow, and spam-score features.
+- Added independent calibration feature storage and inactive-by-default reject-audit Run configuration support. No DR-to-DA conversion was introduced.
+- Added mocked contract, guard, multiple-feature mapping, cache deduplication, and provider-isolation coverage.
+- No credentials were changed and no live Ahrefs, Moz, or DataForSEO request was made during this implementation pass.
+
 ### Ahrefs DR Proxy Pipeline - implementation approved, not started
 
 - Recorded the approved additive Ahrefs DR high-recall proxy scope in `Ahref DR Pipelne.md`.

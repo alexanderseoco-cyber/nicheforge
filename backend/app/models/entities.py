@@ -114,6 +114,7 @@ class Run(Base):
     proxy_metric: Mapped[str | None] = mapped_column(String(80), nullable=True)
     proxy_calibration_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
     proxy_configuration_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    proxy_reject_audit_percent: Mapped[float] = mapped_column(Float, default=0.0)
 
 
 class RunCandidate(Base):
@@ -343,6 +344,30 @@ class ProxyAuthorityEvidence(Base):
     fresh_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class ProxyBacklinkFeatureEvidence(Base):
+    __tablename__ = "proxy_backlink_feature_evidence"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    target_domain: Mapped[str] = mapped_column(String(500), index=True)
+    provider: Mapped[str] = mapped_column(String(80), default="dataforseo", index=True)
+    operation: Mapped[str] = mapped_column(String(100), default="backlinks_bulk_pages_summary_live")
+    rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    backlinks: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    referring_domains: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    referring_main_domains: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    referring_ips: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    referring_subnets: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    referring_domains_nofollow: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    referring_main_domains_nofollow: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    backlinks_spam_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    request_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    fresh_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    actual_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
+    api_status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    api_status_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+
 class ProxyCalibrationObservation(Base):
     __tablename__ = "proxy_calibration_observations"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
@@ -353,6 +378,9 @@ class ProxyCalibrationObservation(Base):
     calibration_version: Mapped[str] = mapped_column(String(80), default="uncalibrated")
     observed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     source_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    dataforseo_features: Mapped[dict] = mapped_column(JSON, default=dict)
+    moz_da_below_10: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    feature_set_version: Mapped[str] = mapped_column(String(80), default="ahrefs_dr_v1")
 
 
 class ManualMozObservation(Base):

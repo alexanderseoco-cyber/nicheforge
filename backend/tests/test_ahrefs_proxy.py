@@ -7,6 +7,7 @@ from app.services.proxy_authority import evaluate_proxy
 
 def test_ahrefs_proxy_contract_mapping_and_identity(monkeypatch):
     class Response:
+        status_code = 200
         def raise_for_status(self): pass
         def json(self): return {"domain_rating": {"domain_rating": 8.5, "license": "https://ahrefs.com/legal/domain-rating-license", "warning": None}}
 

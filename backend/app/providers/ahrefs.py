@@ -24,6 +24,8 @@ class AhrefsDomainRatingProvider:
         self.path = path
         self.enabled = enabled
         self.live_approved = live_approved
+        self.last_http_status: int | None = None
+        self.last_response_payload: dict | None = None
 
     def validate_live_execution(self) -> None:
         if not self.enabled:
@@ -38,8 +40,10 @@ class AhrefsDomainRatingProvider:
         async with httpx.AsyncClient(timeout=30) as client:
             for target in targets:
                 response = await client.get(self.base_url + self.path, headers=headers, params={"target": target.root_domain})
+                self.last_http_status = response.status_code
+                self.last_response_payload = response.json()
                 response.raise_for_status()
-                payload = response.json()
+                payload = self.last_response_payload
                 metric = (payload.get("domain_rating") or {}).get("domain_rating")
                 results.append(ProxyAuthorityResult(target.url, target.root_domain, metric, self.provider, self.metric, payload))
         return results

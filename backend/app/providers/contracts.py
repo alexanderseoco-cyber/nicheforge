@@ -84,3 +84,23 @@ class ProxyAuthorityResult:
     provider: str = "ahrefs"
     metric: str = "domain_rating"
     raw: Any = None
+
+
+@dataclass
+class BacklinkFeatureResult:
+    target: str
+    rank: int | None = None
+    backlinks: int | None = None
+    referring_domains: int | None = None
+    referring_main_domains: int | None = None
+    referring_ips: int | None = None
+    referring_subnets: int | None = None
+    referring_domains_nofollow: int | None = None
+    referring_main_domains_nofollow: int | None = None
+    backlinks_spam_score: float | None = None
+    provider: str = "dataforseo"
+    metric: str = "backlink_summary"
+    raw: Any = None
+    actual_cost: float | None = None
+    api_status_code: int | None = None
+    api_status_message: str | None = None
