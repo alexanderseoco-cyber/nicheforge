@@ -70,7 +70,7 @@ async def evaluate_run_candidate_proxy(db: Session, run: Run, rc: RunCandidate,
         key = provider_cache_key("ahrefs", "domain_rating", root_domain=domain)
         cache = db.scalar(select(ProviderCache).where(ProviderCache.cache_key == key))
         evidence = db.get(ProxyAuthorityEvidence, cache.evidence_id) if cache and cache.evidence_type == "proxy_authority" else None
-        if evidence and evidence.mapping_status == "mapped" and not force_refresh and evidence_is_fresh(cache.fresh_until):
+        if evidence and not force_refresh and evidence_is_fresh(cache.fresh_until):
             ratings.append(evidence.domain_rating); cached_count += 1; continue
         result: ProxyAuthorityResult = (await ahrefs_proxy_provider().fetch([AuthorityTarget(row.url, domain)]))[0]
         evidence = ProxyAuthorityEvidence(target_url=row.url, root_domain=domain, provider="ahrefs", metric="domain_rating", domain_rating=result.domain_rating, source_kind="ahrefs_api", raw_payload=result.raw or {}, request_metadata={"endpoint": "/v3/public/domain-rating-free"}, fetched_at=_now(), fresh_until=_now() + timedelta(days=30))

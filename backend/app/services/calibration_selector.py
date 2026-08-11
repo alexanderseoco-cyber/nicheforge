@@ -53,8 +53,23 @@ def select_calibration_sample(db: Session, rows: Iterable[SerpResultRow], limit:
             segment = "strong_control"
         selected.append(CalibrationCandidate(domain, ahrefs.domain_rating, rank, backlink.referring_domains if backlink else None, segment, disagreement, "signal_disagreement" if disagreement else f"{segment}_coverage"))
 
-    # Disagreements teach the most; preserve deterministic ordering within each
-    # segment and then fill the requested queue without inventing metrics.
+    # Disagreements teach the most. Reserve every requested segment before
+    # filling remaining capacity so strong controls cannot be crowded out by
+    # a large weak-domain pool.
     segment_order = {"weak": 0, "borderline": 1, "medium": 2, "strong_control": 3}
-    selected.sort(key=lambda item: (0 if item.disagreement else 1, segment_order[item.segment], item.domain))
-    return selected[:limit]
+    selected.sort(key=lambda item: (0 if item.disagreement else 1, item.domain))
+    buckets = {segment: [item for item in selected if item.segment == segment] for segment in segment_order}
+    boundary = buckets["weak"] + buckets["borderline"]
+    boundary.sort(key=lambda item: (0 if item.disagreement else 1, item.segment, item.domain))
+    medium = buckets["medium"]
+    controls = buckets["strong_control"]
+    boundary_quota = min(len(boundary), max(1, round(limit * 0.60)))
+    control_quota = min(len(controls), max(1, round(limit * 0.12)))
+    medium_quota = min(len(medium), max(0, round(limit * 0.20)))
+    chosen = boundary[:boundary_quota] + medium[:medium_quota] + controls[:control_quota]
+    remaining = [item for item in selected if item not in chosen]
+    remaining.sort(key=lambda item: (0 if item.disagreement else 1, segment_order[item.segment], item.domain))
+    output = (chosen + remaining)[:limit]
+    # Explicitly identify the next false-negative hunting queue without
+    # changing production thresholds or making a rejection decision.
+    return [CalibrationCandidate(x.domain, x.ahrefs_dr, x.dataforseo_rank, x.referring_domains, x.segment, x.disagreement, "POSITIVE-HUNT" if 8 <= x.ahrefs_dr <= 30 else x.selection_reason) for x in output]
