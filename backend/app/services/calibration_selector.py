@@ -23,6 +23,21 @@ class CalibrationCandidate:
     selection_reason: str
 
 
+def select_round2_calibration_sample(db: Session, rows: Iterable[SerpResultRow], labelled_domains: set[str] | None = None, limit: int = 30) -> list[CalibrationCandidate]:
+    """Select Round-2 candidates to hunt DR>=10 / DA<10 counterexamples.
+
+    Uses only existing cached Ahrefs/backlink evidence and never performs
+    provider I/O. Domains already manually labelled are excluded.
+    """
+    labelled_domains = labelled_domains or set()
+    rows = list(rows)
+    candidates = select_calibration_sample(db, [row for row in rows if (root_domain(row.url) or row.root_domain) not in labelled_domains], limit=len(rows) or limit)
+    boundary = [item for item in candidates if 8 <= item.ahrefs_dr <= 30]
+    low = [item for item in candidates if item.ahrefs_dr < 8]
+    controls = [item for item in candidates if item.ahrefs_dr > 30]
+    return (boundary + low + controls)[:limit]
+
+
 def select_calibration_sample(db: Session, rows: Iterable[SerpResultRow], limit: int = 25) -> list[CalibrationCandidate]:
     """Return cached-Ahrefs domains weighted toward the DA<10 boundary.
 

@@ -9,7 +9,7 @@ from app.providers.contracts import AuthorityTarget
 from app.providers.dataforseo_backlinks import DataForSEOBacklinkSummaryProvider
 from app.services.identity import canonical_identity, identity_key
 from app.services.proxy_authority import enrich_backlink_features
-from app.services.calibration_selector import select_calibration_sample
+from app.services.calibration_selector import select_calibration_sample, select_round2_calibration_sample
 from app.services.calibration_consolidation import import_ahrefs_evidence
 
 
@@ -91,6 +91,18 @@ def test_calibration_evidence_import_preserves_provenance_cache_and_avoids_provi
         assert target.query(ProviderCall).count() == 0
         assert target.query(ProviderCache).count() == 1
         assert import_ahrefs_evidence(source, target, "source.db") == []
+
+
+def test_round2_selector_excludes_labels_and_prioritizes_boundary_without_network():
+    engine = create_engine("sqlite:///:memory:"); Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        rows = [SerpResultRow(snapshot_id="s", position=i, url=f"https://round{i}.com/", root_domain=f"round{i}.com") for i in range(1, 4)]
+        db.add_all(rows)
+        Evidence = __import__("app.models.entities", fromlist=["ProxyAuthorityEvidence"]).ProxyAuthorityEvidence
+        db.add_all([Evidence(root_domain="round1.com", target_url="https://round1.com", domain_rating=12), Evidence(root_domain="round2.com", target_url="https://round2.com", domain_rating=4), Evidence(root_domain="round3.com", target_url="https://round3.com", domain_rating=80)])
+        db.commit()
+        result = select_round2_calibration_sample(db, rows, {"round1.com"}, 3)
+        assert [item.domain for item in result] == ["round2.com", "round3.com"]
 
 
 def test_dataforseo_backlink_budget_guard_blocks_over_budget():
