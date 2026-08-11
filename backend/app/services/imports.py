@@ -230,7 +230,35 @@ def import_manual_evidence(db: Session, project_id: str, row: dict):
     keyword = (row.get("keyword") or "").strip(); entity = _resolve_candidate(db, project_id, keyword, row, batch)
     if entity is None: batch.rejected_count = 1; db.commit(); return {"import_batch_id": batch.id, "accepted": 0, "unresolved": 1}
     value = float(row["value"]); metric = row.get("metric_type")
-    if metric == "search_volume": db.add(SearchVolumeEvidence(candidate_entity_id=entity.id, keyword=keyword, provider="manual", source_kind="manual", avg_monthly_searches=int(value), raw_payload=row, request_metadata={"note": row.get("note")}, fetched_at=_utc_now()))
+    if metric in ("moz_da", "moz_domain_authority"):
+        from app.services.proxy_authority import add_manual_moz_observation
+        add_manual_moz_observation(db, row.get("domain") or row.get("url") or keyword, value, float(row["pa"]) if row.get("pa") else None, float(row["spam_score"]) if row.get("spam_score") else None, row)
+    elif metric == "search_volume": db.add(SearchVolumeEvidence(candidate_entity_id=entity.id, keyword=keyword, provider="manual", source_kind="manual", avg_monthly_searches=int(value), raw_payload=row, request_metadata={"note": row.get("note")}, fetched_at=_utc_now()))
     elif metric == "keyword_difficulty": db.add(KeywordDifficultyEvidence(candidate_entity_id=entity.id, keyword=keyword, provider="manual", source_kind="manual", difficulty=value, raw_payload=row, request_metadata={"note": row.get("note")}, fetched_at=_utc_now()))
     else: raise ValueError("Unsupported manual metric type")
     batch.row_count = batch.accepted_count = 1; db.commit(); return {"import_batch_id": batch.id, "accepted": 1, "unresolved": 0}
+
+
+def import_manual_moz_csv(db: Session, project_id: str, content: bytes, filename: str = "manual-moz.csv"):
+    batch, duplicate = _batch(db, project_id, "manual_moz", filename, content)
+    if duplicate:
+        return {"import_batch_id": batch.id, "duplicate_file": True, "accepted": 0, "unresolved": 0}
+    rows = list(csv.DictReader(io.StringIO(content.decode("utf-8-sig"))))
+    from app.services.proxy_authority import add_manual_moz_observation
+    accepted = unresolved = 0
+    for row in rows:
+        domain = (row.get("Domain") or row.get("domain") or row.get("URL") or row.get("url") or "").strip()
+        if not domain:
+            unresolved += 1
+            continue
+        def number(*names):
+            for name in names:
+                if row.get(name) not in (None, ""):
+                    try: return float(str(row[name]).replace(",", ""))
+                    except ValueError: return None
+            return None
+        add_manual_moz_observation(db, domain, number("DA", "Moz DA", "moz_da"), number("PA", "Moz PA", "moz_pa"), number("Spam Score", "spam_score"), row)
+        accepted += 1
+    batch.row_count = len(rows); batch.accepted_count = accepted; batch.rejected_count = 0
+    batch.error_summary = {"unresolved_count": unresolved}; db.commit()
+    return {"import_batch_id": batch.id, "duplicate_file": False, "accepted": accepted, "unresolved": unresolved}

@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     moz_api_auth_mode: str = "bearer"
     moz_url_metrics_path: str | None = None
 
+    ahrefs_api_key: str | None = None
+    ahrefs_api_base_url: str = "https://api.ahrefs.com"
+    ahrefs_domain_rating_path: str = "/v3/public/domain-rating-free"
+    ahrefs_proxy_enabled: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

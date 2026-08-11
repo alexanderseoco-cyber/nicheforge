@@ -110,6 +110,10 @@ class Run(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    proxy_provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    proxy_metric: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    proxy_calibration_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    proxy_configuration_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class RunCandidate(Base):
@@ -142,6 +146,8 @@ class RunCandidate(Base):
     primary_gate_passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     kd_value_used: Mapped[float | None] = mapped_column(Float, nullable=True)
     kd_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    proxy_classification: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    proxy_result: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     __table_args__ = (UniqueConstraint("run_id", "project_candidate_id", name="uq_run_project_candidate"),)
@@ -320,6 +326,45 @@ class AuthorityMetric(Base):
     backlinks: Mapped[int | None] = mapped_column(Integer, nullable=True)
     raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ProxyAuthorityEvidence(Base):
+    __tablename__ = "proxy_authority_evidence"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    target_url: Mapped[str] = mapped_column(String(2000), index=True)
+    root_domain: Mapped[str] = mapped_column(String(500), index=True)
+    provider: Mapped[str] = mapped_column(String(80), index=True, default="ahrefs")
+    metric: Mapped[str] = mapped_column(String(80), default="domain_rating")
+    domain_rating: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source_kind: Mapped[str] = mapped_column(String(40), default="ahrefs_api")
+    raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    request_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    fresh_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ProxyCalibrationObservation(Base):
+    __tablename__ = "proxy_calibration_observations"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    normalized_domain: Mapped[str] = mapped_column(String(500), index=True)
+    ahrefs_dr: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moz_da: Mapped[float | None] = mapped_column(Float, nullable=True)
+    provenance: Mapped[str] = mapped_column(String(40), default="manual_moz")
+    calibration_version: Mapped[str] = mapped_column(String(80), default="uncalibrated")
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    source_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class ManualMozObservation(Base):
+    __tablename__ = "manual_moz_observations"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    normalized_domain: Mapped[str] = mapped_column(String(500), index=True)
+    moz_da: Mapped[float | None] = mapped_column(Float, nullable=True)
+    moz_pa: Mapped[float | None] = mapped_column(Float, nullable=True)
+    spam_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source_kind: Mapped[str] = mapped_column(String(40), default="manual_moz")
+    raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class ProviderCache(Base):

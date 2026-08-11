@@ -403,6 +403,24 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Validation: targeted Trial/provider tests `14 passed`; full mock-provider suite `68 passed, 1087 warnings`; Python compilation and `git diff --check` passed. No real Trial or Production request was made.
 - Reconciled plan reference: Provider Readiness & Live Integration Boundary in `docs/ORIGINAL_PLAN_OF_IMPLEMENTATION.md`.
 
+### Ahrefs DR Proxy Pipeline - implementation complete
+
+- Verified the official Ahrefs free Domain Rating contract and recorded it in `docs/AHREFS_DR_PROXY_STATUS.md`.
+- Added isolated Ahrefs DR provider transport, configuration, proxy evidence, cache identity, ProviderCall accounting, Run/RunCandidate proxy snapshots, high-recall classifications, explanation fields, and uncalibrated bootstrap state.
+- Added immutable paired calibration storage and manual Moz single-entry/CSV observation paths with `manual_moz` provenance. Moz DA evidence and semantics remain separate.
+- Added migration `a8ahrefsproxy`; fresh-chain migration validation passed without leaving a test database. The existing `backend/nicheforge.db` was restored to its prior migration state after validation and was not used for final migration testing.
+- Added mocked Ahrefs contract, identity, false-negative safety, classification, and manual-provenance coverage. Existing Moz/CSV/SV/SERP behavior remained green.
+- Validation: targeted tests `13 passed`; full mock suite `71 passed, 1089 warnings`; compilation and `git diff --check` passed. No live Ahrefs, Moz, or additional DataForSEO request was made.
+- Remaining boundary: live Ahrefs smoke testing requires separate API-key configuration and explicit authorization.
+
+### Ahrefs DR Proxy Pipeline - implementation approved, not started
+
+- Recorded the approved additive Ahrefs DR high-recall proxy scope in `Ahref DR Pipelne.md`.
+- Moz DA remains the protected canonical authority pipeline; Ahrefs DR will remain a separate provider, metric, evidence lineage, cache, classification, and calibration path.
+- Candidate count remains user-controlled; existing CSV, population, trusted SV, SERP, cache, Run/RunCandidate, ProviderCall, recalculation, restart/resume, and historical snapshot behavior must remain intact.
+- Implementation is authorized to proceed, but no Ahrefs API key has been requested and no live Ahrefs, Moz, or additional DataForSEO request has been made.
+- Reconciled plan reference: additive authority-proxy implementation following the Provider Readiness & Live Integration Boundary.
+
 ### Provider Readiness - adaptive authority continuation refactor
 
 - Recalculation execution now acquires unresolved authority targets in ordered adaptive batches, reuses compatible cached evidence, preserves SERP-to-authority lineage, records one ProviderCall per issued batch, and leaves post-stop positions unchecked.

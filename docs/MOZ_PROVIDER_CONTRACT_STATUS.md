@@ -19,3 +19,9 @@ Research-only boundary. No live Moz endpoint or credential is activated until ea
 | KD billing | UNVERIFIED | No claim is made that KD is free or bundled with DA. | Official contract review pending / 2026-08-11 |
 
 Third-party pricing or endpoint claims must not promote any row above `UNVERIFIED`.
+
+## Parallel Ahrefs DR proxy boundary
+
+Ahrefs DR is implemented as a separate high-recall proxy and is not Moz DA evidence. The verified official Ahrefs contract is documented at [Ahrefs Domain Rating free API](https://docs.ahrefs.com/en/api/reference/public/get-domain-rating-free): `GET https://api.ahrefs.com/v3/public/domain-rating-free`, required `target`, `Authorization: Bearer <token>`, response `domain_rating.domain_rating`, license/warning metadata, zero API-unit consumption, and required attribution `Domain Rating by Ahrefs`.
+
+No Ahrefs key is configured and no live Ahrefs request has been made. Proxy calibration remains `UNCALIBRATED_HIGH_RECALL`; no DR-to-DA conversion is assumed.

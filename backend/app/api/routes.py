@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from app.db.session import get_db
-from app.models.entities import ImportBatch, Project, City, Candidate, Run
+from app.models.entities import ImportBatch, Project, City, Candidate, Run, RunCandidate
 from app.schemas.domain import ProjectCreate, CandidateGenerateRequest, CandidateOut, RunRequest, RunCreate, RunOut, ValidationProfile, OverlayRequest
 from app.services.normalization import normalize_keyword, build_keyword
 from app.services.gates import population_gate
@@ -13,10 +13,28 @@ from app.providers.factory import authority_provider
 from app.providers.contracts import AuthorityTarget
 from app.services.normalization import root_domain
 from app.services.run_pipeline import execute_run
+from app.services.proxy_authority import evaluate_run_candidate_proxy
 from app.services.recalculation import preview_recalculation, recalculate, ledger, candidate_history
-from app.services.imports import export_candidate_history_csv, export_project_csv, export_run_csv, import_cities, import_keyword_export, import_manual_evidence, import_moz, import_niches
+from app.services.imports import export_candidate_history_csv, export_project_csv, export_run_csv, import_cities, import_keyword_export, import_manual_evidence, import_manual_moz_csv, import_moz, import_niches
 
 router = APIRouter(prefix="/api/v1")
+
+
+@router.post("/runs/{run_id}/proxy-authority")
+async def evaluate_proxy_run_endpoint(run_id: str, payload: dict | None = None, db: Session = Depends(get_db)):
+    run = db.get(Run, run_id)
+    if not run: raise HTTPException(404, "Run not found")
+    payload = payload or {}
+    candidates = db.query(RunCandidate).filter_by(run_id=run_id).all()
+    selected = set(payload.get("run_candidate_ids") or [item.id for item in candidates])
+    results = []
+    from app.models.entities import SerpResultRow
+    for rc in candidates:
+        if rc.id not in selected or not rc.serp_snapshot_id: continue
+        rows = db.query(SerpResultRow).filter_by(snapshot_id=rc.serp_snapshot_id).order_by(SerpResultRow.position).all()
+        decision = await evaluate_run_candidate_proxy(db, run, rc, rows, float(payload.get("threshold", 14.0)), int(payload.get("minimum_weak", 4)), int(payload.get("ideal_weak", 5)), bool(payload.get("force_refresh", False)))
+        results.append({"run_candidate_id": rc.id, "classification": decision.classification, "reason": decision.reason, "uncertainty": decision.uncertainty, "recommended_action": decision.recommended_action, "why_not_rejected": decision.why_not_rejected, "evidence": rc.proxy_result})
+    return {"run_id": run_id, "provider": "ahrefs", "metric": "domain_rating", "calibration_state": "UNCALIBRATED_HIGH_RECALL", "attribution": "Domain Rating by Ahrefs", "results": results}
 
 
 @router.post("/projects/{project_id}/imports/niches")
@@ -64,6 +82,12 @@ def export_history_endpoint(project_candidate_id: str, db: Session = Depends(get
 async def import_moz_endpoint(project_id: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
     if not db.get(Project, project_id): raise HTTPException(404, "Project not found")
     return import_moz(db, project_id, await file.read(), file.filename or "moz.csv")
+
+
+@router.post("/projects/{project_id}/imports/manual-moz")
+async def import_manual_moz_endpoint(project_id: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    if not db.get(Project, project_id): raise HTTPException(404, "Project not found")
+    return import_manual_moz_csv(db, project_id, await file.read(), file.filename or "manual-moz.csv")
 
 
 @router.post("/projects/{project_id}/imports/manual")

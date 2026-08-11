@@ -74,3 +74,13 @@ class SerpProvider(Protocol):
 
 class AuthorityProvider(Protocol):
     async def fetch(self, targets: list[AuthorityTarget]) -> list[AuthorityResult]: ...
+
+
+@dataclass
+class ProxyAuthorityResult:
+    url: str
+    root_domain: str
+    domain_rating: float | None
+    provider: str = "ahrefs"
+    metric: str = "domain_rating"
+    raw: Any = None

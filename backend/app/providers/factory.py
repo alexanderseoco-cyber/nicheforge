@@ -3,6 +3,7 @@ from app.providers.mock import MockSearchVolumeProvider, MockSerpProvider, MockA
 from app.providers.dataforseo import DataForSEOKeywordProvider, DataForSEOSerpProvider, DataForSEOSandboxSerpProvider
 from app.providers.runtime_config import DataForSEOConfig, ProviderMode
 from app.providers.moz import MozAuthorizedProvider
+from app.providers.ahrefs import AhrefsDomainRatingProvider
 
 
 def search_volume_provider():
@@ -33,3 +34,8 @@ def authority_provider():
             s.moz_api_auth_mode,
         )
     return MockAuthorityProvider()
+
+
+def ahrefs_proxy_provider():
+    s = get_settings()
+    return AhrefsDomainRatingProvider(s.ahrefs_api_key or "", s.ahrefs_api_base_url, s.ahrefs_domain_rating_path)
