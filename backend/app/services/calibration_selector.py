@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
 
 from app.models.entities import ProxyAuthorityEvidence, ProxyBacklinkFeatureEvidence, SerpResultRow
@@ -33,11 +33,14 @@ def select_calibration_sample(db: Session, rows: Iterable[SerpResultRow], limit:
         return []
     domains = sorted({root_domain(row.url) or row.root_domain for row in rows})
     selected: list[CalibrationCandidate] = []
+    backlink_features_available = "mapping_status" in {column["name"] for column in inspect(db.bind).get_columns("proxy_backlink_feature_evidence")}
     for domain in domains:
         ahrefs = db.scalar(select(ProxyAuthorityEvidence).where(ProxyAuthorityEvidence.root_domain == domain).order_by(ProxyAuthorityEvidence.fetched_at.desc()))
         if not ahrefs or ahrefs.domain_rating is None:
             continue
-        backlink = db.scalar(select(ProxyBacklinkFeatureEvidence).where(ProxyBacklinkFeatureEvidence.target_domain == domain, ProxyBacklinkFeatureEvidence.mapping_status == "mapped").order_by(ProxyBacklinkFeatureEvidence.fetched_at.desc()))
+        backlink = None
+        if backlink_features_available:
+            backlink = db.scalar(select(ProxyBacklinkFeatureEvidence).where(ProxyBacklinkFeatureEvidence.target_domain == domain, ProxyBacklinkFeatureEvidence.mapping_status == "mapped").order_by(ProxyBacklinkFeatureEvidence.fetched_at.desc()))
         rank = backlink.rank if backlink else None
         disagreement = rank is not None and ((ahrefs.domain_rating <= 14 and rank > 100) or (ahrefs.domain_rating > 14 and rank < 100))
         if ahrefs.domain_rating <= 14:
