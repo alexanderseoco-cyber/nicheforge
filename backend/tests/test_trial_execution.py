@@ -43,7 +43,7 @@ def test_trial_end_to_end_resolves_exact_location_routes_trial_and_persists_cost
 
     async def handler(request):
         requests.append(request)
-        if request.url.path.endswith("/locations"):
+        if request.url.path.endswith("/locations/us"):
             return httpx.Response(200, json={"tasks": [{"result": [{
                 "location_name": "Salina, Kansas, United States", "location_code": 101}]}]})
         return httpx.Response(200, json={"tasks": [{"cost": 0.19, "result": [{"items": [
@@ -58,7 +58,7 @@ def test_trial_end_to_end_resolves_exact_location_routes_trial_and_persists_cost
     snapshot, call = asyncio.run(execute_trial_serp(db, run=run, run_candidate=rc,
         candidate_entity_id="e", city="Salina", state="Kansas", keyword="term",
         estimated_cost=0.25, provider=provider, location_resolver=resolver))
-    assert requests[0].url == "https://api.dataforseo.com/v3/serp/google/locations"
+    assert requests[0].url == "https://api.dataforseo.com/v3/serp/google/locations/us"
     assert requests[1].url == "https://api.dataforseo.com/v3/serp/google/organic/live/regular"
     assert requests[1].content.find(b'"location_code":101') >= 0
     assert b'location_name' not in requests[1].content
