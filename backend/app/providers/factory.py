@@ -5,6 +5,23 @@ from app.providers.runtime_config import DataForSEOConfig, ProviderMode
 from app.providers.moz import MozAuthorizedProvider
 from app.providers.ahrefs import AhrefsDomainRatingProvider
 from app.providers.dataforseo_backlinks import DataForSEOBacklinkSummaryProvider
+from app.providers.keyword_metrics import (GoogleAdsKeywordMetricsProvider,
+    ImportedKeywordMetricsProvider, MockKeywordMetricsProvider)
+
+
+def keyword_metrics_provider(*, imported_records=None):
+    """Select the keyword-metrics provider explicitly; never silently fallback."""
+    s = get_settings()
+    name = (s.keyword_metrics_provider or "").strip().lower()
+    if name == "mock":
+        return MockKeywordMetricsProvider()
+    if name == "imported":
+        return ImportedKeywordMetricsProvider(imported_records or {})
+    if name == "google_ads":
+        return GoogleAdsKeywordMetricsProvider(enabled=s.google_ads_enabled, live_approved=s.google_ads_live_approved, credentials_configured=bool(s.google_ads_developer_token and s.google_ads_customer_id))
+    if name == "dataforseo":
+        return DataForSEOKeywordProvider(s.dataforseo_login or "", s.dataforseo_password or "")
+    raise ValueError(f"Unknown keyword metrics provider: {name!r}")
 
 
 def search_volume_provider():

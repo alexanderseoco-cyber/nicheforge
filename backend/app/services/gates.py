@@ -6,9 +6,12 @@ from app.schemas.domain import ValidationProfile
 class GateDecision:
     passed: bool
     reason_codes: list[str]
+    status: str = "APPLIED"
 
 
 def population_gate(population: int, profile: ValidationProfile) -> GateDecision:
+    if not profile.population_enabled:
+        return GateDecision(True, ["POPULATION_NOT_APPLICABLE"], "NOT_APPLICABLE")
     if population < profile.min_population:
         return GateDecision(False, ["POPULATION_BELOW_MIN"])
     if population > profile.max_population:
@@ -17,8 +20,10 @@ def population_gate(population: int, profile: ValidationProfile) -> GateDecision
 
 
 def search_volume_gate(search_volume: int | None, profile: ValidationProfile) -> GateDecision:
+    if not profile.search_volume_enabled or profile.min_search_volume is None:
+        return GateDecision(True, ["SV_NOT_APPLICABLE"], "NOT_APPLICABLE")
     if search_volume is None:
-        return GateDecision(False, ["SV_MISSING"])
+        return GateDecision(False, ["SV_MISSING"], "MISSING_EVIDENCE")
     if search_volume < profile.min_search_volume:
         return GateDecision(False, ["SV_BELOW_THRESHOLD"])
     return GateDecision(True, [])

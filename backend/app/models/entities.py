@@ -219,6 +219,79 @@ class SearchVolumeEvidence(Base):
     __table_args__ = (Index("ix_sv_evidence_request", "keyword", "location_name", "language_code", "country_code"),)
 
 
+class KeywordMetricQuery(Base):
+    """Provider-neutral research query; independent from validation Runs."""
+    __tablename__ = "keyword_metric_queries"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    submitted_keyword: Mapped[str] = mapped_column(String(400), index=True)
+    normalized_keyword: Mapped[str] = mapped_column(String(400), index=True)
+    location_name: Mapped[str | None] = mapped_column(String(240), nullable=True, index=True)
+    location_target: Mapped[dict] = mapped_column(JSON, default=dict)
+    language_code: Mapped[str] = mapped_column(String(16), default="en")
+    country_code: Mapped[str] = mapped_column(String(2), default="US")
+    provider: Mapped[str] = mapped_column(String(80), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="PENDING")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class KeywordMetricEvidence(Base):
+    """Append-only keyword metrics; refreshes create new rows."""
+    __tablename__ = "keyword_metric_evidence"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    query_id: Mapped[str] = mapped_column(ForeignKey("keyword_metric_queries.id"), index=True)
+    submitted_keyword: Mapped[str] = mapped_column(String(400), index=True)
+    provider_keyword: Mapped[str | None] = mapped_column(String(400), nullable=True, index=True)
+    normalized_keyword: Mapped[str] = mapped_column(String(400), index=True)
+    location_name: Mapped[str | None] = mapped_column(String(240), nullable=True, index=True)
+    location_target: Mapped[dict] = mapped_column(JSON, default=dict)
+    language_code: Mapped[str] = mapped_column(String(16), default="en")
+    country_code: Mapped[str] = mapped_column(String(2), default="US")
+    provider: Mapped[str] = mapped_column(String(80), index=True)
+    source_kind: Mapped[str] = mapped_column(String(40), default="provider")
+    avg_monthly_searches: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    competition: Mapped[float | None] = mapped_column(Float, nullable=True)
+    competition_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cpc: Mapped[float | None] = mapped_column(Float, nullable=True)
+    low_bid: Mapped[float | None] = mapped_column(Float, nullable=True)
+    high_bid: Mapped[float | None] = mapped_column(Float, nullable=True)
+    monthly_history: Mapped[list] = mapped_column(JSON, default=list)
+    raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    fresh_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cost: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mapping_status: Mapped[str] = mapped_column(String(30), default="MAPPED")
+
+
+class KeywordMetricBatch(Base):
+    __tablename__ = "keyword_metric_batches"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    provider: Mapped[str] = mapped_column(String(80), index=True)
+    submitted_count: Mapped[int] = mapped_column(Integer, default=0)
+    deduplicated_count: Mapped[int] = mapped_column(Integer, default=0)
+    returned_count: Mapped[int] = mapped_column(Integer, default=0)
+    mapped_count: Mapped[int] = mapped_column(Integer, default=0)
+    unmapped_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(30), default="PENDING")
+    cost: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class KeywordMetricValidationHandoff(Base):
+    """Explicit subset handoff; points to immutable evidence, never copies it."""
+    __tablename__ = "keyword_metric_validation_handoffs"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    evidence_id: Mapped[str] = mapped_column(ForeignKey("keyword_metric_evidence.id"), index=True)
+    submitted_keyword: Mapped[str] = mapped_column(String(400))
+    provider: Mapped[str] = mapped_column(String(80))
+    provider_keyword: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    location_target: Mapped[dict] = mapped_column(JSON, default=dict)
+    language_code: Mapped[str] = mapped_column(String(16), default="en")
+    country_code: Mapped[str] = mapped_column(String(2), default="US")
+    validation_profile_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(30), default="QUEUED")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class KeywordDifficultyEvidence(Base):
     __tablename__ = "keyword_difficulty_evidence"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)

@@ -484,3 +484,144 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Added regression coverage for multi-target mapping, missing items, cost propagation, and cache/provider-call behavior.
 - Reclassified the original five paid evidence rows as `unrecoverable_raw_missing` because their raw response was not persisted; original ProviderCall and `$0.02418` actual cost remain unchanged.
 - No additional DataForSEO, Ahrefs, Moz, SERP, or SV requests were made.
+
+### Keyword Metrics Engine plan — recorded
+
+- Added `integration of Search Volume and Trend plan.md` as the governing plan for the standalone, provider-neutral search-volume and trend engine.
+- Incorporated immutable evidence refreshes, provider-returned keyword identity, distinct zero/unknown/paid cost semantics, API-before-UI sequencing, optional Google Ads provider implementation, profile-specific SV thresholds, and reusable evidence across validation profiles.
+- No implementation or provider request has started in this milestone.
+
+### Keyword Metrics Engine Phase 1 — started
+
+- Added provider-neutral `KeywordMetricQuery`, append-only `KeywordMetricEvidence`, and `KeywordMetricBatch` models.
+- Added migration `backend/alembic/versions/c2_keyword_metrics_engine.py`; Alembic reports `c2keywordmetrics` as the current head.
+- Extended keyword metric contracts with country/targeting, provider-returned keyword identity, competition index, bid fields, and explicit cost.
+- Validation executed: foundation/evidence tests `9 passed`; diff check clean.
+- Compilation was attempted but Python could not replace two locked project `__pycache__` files; no source compilation error was reported.
+- No live Google Ads, DataForSEO, Moz, Ahrefs, or SV provider requests were made.
+
+### Keyword Metrics Engine Phase 2 — provider boundary
+
+- Added explicit keyword-metrics provider factory selection for mock, imported, Google Ads, and DataForSEO providers.
+- Unknown providers now fail explicitly; no silent fallback is permitted.
+- Added provider-boundary tests for unknown selection, disabled/unapproved Google guards, and zero-cost mock identity mapping.
+- Batch orchestration and API contracts remain next; provider transport remains disabled.
+
+### Keyword Metrics Engine Phase 2 — cache-aware batch contract
+
+- Added cache-first batch orchestration with fresh-hit reuse, stale/missing batching, explicit unmapped results, and idempotent resume behavior.
+- Added four regression tests covering provider-call suppression, selective batching, partial responses, and restart/resume deduplication.
+- Provider transport remains disabled; no live requests were made.
+
+### Keyword Metrics Engine Phase 2 — research API contracts
+
+- Added thin preview, research, list, detail, and refresh API endpoints.
+- Added request, preview, result, and research response schemas exposing provider, targeting, mapping status, metrics, batch status, and cost fields.
+- Research routes delegate to the provider factory and batch orchestrator; validation handoff/export remain deferred.
+
+### Keyword Metrics Engine Phase 2 — PASS
+
+- Provider abstraction: PASS.
+- Provider factory and no-silent-fallback behavior: PASS.
+- Google pre-transport guards: PASS.
+- Cache-aware orchestration, deduplication, and restart safety: PASS.
+- Research API contracts: PASS.
+- Added direct API tests for non-transporting preview, mock research, unknown provider rejection, unmapped serialization, and evidence retrieval.
+- AST compilation: PASS.
+- `git diff --check`: PASS.
+- Live-provider isolation: PASS.
+
+### Keyword Metrics Engine Phase 3 — started
+
+- Next scope is configuration and safety-boundary formalization only; live Google transport remains disabled.
+
+### Keyword Metrics Engine Phase 3 — safety boundary implemented
+
+- Added explicit provider enablement, approval, credential, batch-size, request-rate, freshness, and budget guards.
+- Added secret-safe error/log redaction.
+- Google Ads factory selection now validates credential presence before transport.
+- Added tests for missing credentials, budget/batch/rate rejection, and secret leakage prevention.
+- No live provider requests were made; truthful ProviderCall persistence remains part of the batch persistence closure.
+
+### Keyword Metrics Engine Phase 3 — PASS
+
+- Provider enablement/approval, credentials, batch size, rate, freshness, budget, redaction, factory guards, and explicit pre-transport failures: PASS.
+- Tests: 16 passed; AST compilation: PASS; `git diff --check`: PASS; live-provider isolation: PASS.
+
+### Keyword Metrics Engine Phase 4 — started
+
+- Added deterministic cache identity for normalized keyword, location name, structured geo target, language, country, provider, and metric version.
+- Targeted and nationally embedded geographic queries are intentionally distinct identities.
+
+### Keyword Metrics Engine Phase 4 — PASS
+
+- Cache identity includes targeting context, provider, and metric version; targeted and embedded geographic queries cannot collide.
+- Tests: 19 passed; AST compilation: PASS; `git diff --check`: PASS.
+
+### Keyword Metrics Engine Phase 5 — started
+
+- Extended batch orchestration with arbitrary-size input, provider-limit chunking, per-chunk request counts, aggregate cost, and resume-safe evidence reuse.
+- Added targeting-mode identity support for future provider/network-scope changes.
+
+### Keyword Metrics Engine Phase 5 — PASS
+
+- Arbitrary input, provider chunking, per-chunk accounting, aggregate costs, unmapped preservation, restart safety, and targeting-aware identity: PASS.
+- Tests: 20 passed; AST compilation: PASS; `git diff --check`: PASS.
+
+### Keyword Metrics Engine Phase 6 — started
+
+- Added neutral research-workspace filtering/sorting, stale-evidence selection, and export-row preparation.
+- No population gate, SV rejection, or automatic validation handoff is applied by the workspace.
+
+### Keyword Metrics Engine Phase 6 — core PASS / overall IN PROGRESS
+
+- Core research/result processing: PASS.
+- Single and bulk keyword request contracts, targeting/language fields, cache preview, stale selection, history visibility, filtering/sorting, and export-row preparation are available.
+- Full user-facing workspace closure remains deferred: CSV upload UI, keyword×city generation UI, monthly-history presentation, and actual CSV/PDF export are not yet claimed complete.
+- These remaining presentation/export operations are explicitly deferred to the planned UI/integration phase; no population gate, universal SV threshold, automatic rejection, or validation handoff will be introduced.
+
+### Keyword Metrics Engine Phase 7 — started
+
+- Added explicit subset-only `send-to-validation` handoff records referencing immutable evidence IDs.
+- Handoff preserves submitted/provider keyword identity, targeting, provider, provenance, and validation-profile snapshot.
+- Handoff performs zero provider requests; SV decisions remain owned by the selected validation profile.
+
+### Keyword Metrics Engine Phase 7 — PASS
+
+- Handoff references immutable evidence IDs, preserves targeting/provider identity, snapshots the selected profile, supports subsets, and performs zero provider requests.
+- Migration head: `c3keywordhandoff`; handoff tests passed.
+
+### Keyword Metrics Engine Phase 8 — started
+
+- Added profile-owned population/SV enablement flags and optional SV minimum.
+- Added policy tests proving the same stored SV can produce different decisions under thresholds 100, 260, and 1,000 without provider access.
+
+### Keyword Metrics Engine Phase 8 — closure checks added
+
+- Missing enabled SV now returns explicit `MISSING_EVIDENCE` semantics.
+- Disabled population/SV gates return explicit `NOT_APPLICABLE` semantics rather than fake PASS evidence.
+- Added regression coverage for immutable profile snapshots and historical policy context.
+
+### Keyword Metrics Engine Phase 8 — PASS
+
+- Threshold policy, immutable Run context, missing-evidence semantics, and independently disabled gates: PASS.
+- Focused closure tests: 10 passed; AST compilation: PASS; `git diff --check`: PASS.
+
+### Keyword Metrics Engine Phase 9 — started
+
+- Verified official Google Ads facts: `GenerateKeywordHistoricalMetrics` accepts up to 10,000 keywords and up to 10 geo targets; language and geo resource names are explicit; responses include query text, close variants, historical metrics, competition, bid ranges, and optional average CPC.
+- Added transport-independent request construction and response mapping, plus OAuth/config fields. Live transport remains disabled.
+
+### Keyword Metrics Engine Phase 9 — contract/mapping PASS
+
+- Google request construction, geo/language mapping, close-variant identity, historical metric mapping, and optional CPC/bid fields: PASS.
+- Added boundary tests for null optional fields, 10,000/10,001 batch handling, geo limits, secret safety, disabled/unapproved transport, and zero-cost semantics.
+- Real Google transport remains intentionally pending external Manager account, developer-token access, OAuth setup, and explicit approval.
+- Remaining Phase 1 work: migration integration tests, current-evidence/cache pointers, API contracts, provider guards, and batch orchestration.
+
+### Keyword Metrics Engine Phase 1 closure and Phase 2 — started
+
+- Cache-free AST compilation check passed for all 37 backend Python files; the prior locked `__pycache__` issue was bypassed without altering cache files.
+- Added `backend/app/providers/keyword_metrics.py` with provider-neutral protocol, deterministic mock provider, import-only provider, and transport-disabled Google Ads skeleton.
+- Added disabled-by-default Google Ads configuration flags without enabling transport.
+- No live Google Ads, DataForSEO, Moz, Ahrefs, or SV provider requests were made.

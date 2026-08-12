@@ -1,0 +1,67 @@
+from types import SimpleNamespace
+
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
+
+from app.db.base import Base
+from app.db.session import get_db
+from fastapi import FastAPI
+from app.api.routes import router
+from app.models.entities import KeywordMetricEvidence
+from app.api import routes
+
+app = FastAPI()
+app.include_router(router)
+
+
+def _client(monkeypatch, provider="mock"):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = Session(engine)
+    app.dependency_overrides[get_db] = lambda: db
+    settings = SimpleNamespace(keyword_metrics_provider=provider, google_ads_enabled=False, google_ads_live_approved=False)
+    monkeypatch.setattr(routes, "get_settings", lambda: settings, raising=False)
+    monkeypatch.setattr("app.providers.factory.get_settings", lambda: settings)
+    return TestClient(app, raise_server_exceptions=False), db
+
+
+def test_preview_is_non_transporting(monkeypatch):
+    client, db = _client(monkeypatch)
+    response = client.post("/api/v1/keyword-metrics/preview", json={"keywords": ["term", "term"]})
+    assert response.status_code == 200
+    assert response.json()["transport_would_occur"] is False
+    app.dependency_overrides.clear(); db.close()
+
+
+def test_research_with_mock_provider(monkeypatch):
+    client, db = _client(monkeypatch)
+    response = client.post("/api/v1/keyword-metrics/research", json={"keywords": ["term"]})
+    assert response.status_code == 200
+    assert response.json()["mapped_count"] == 1
+    app.dependency_overrides.clear(); db.close()
+
+
+def test_unknown_provider_is_rejected(monkeypatch):
+    client, db = _client(monkeypatch, "not-a-provider")
+    response = client.post("/api/v1/keyword-metrics/preview", json={"keywords": ["term"]})
+    assert response.status_code == 500
+    app.dependency_overrides.clear(); db.close()
+
+
+def test_unmapped_response_is_serialized(monkeypatch):
+    client, db = _client(monkeypatch, "imported")
+    response = client.post("/api/v1/keyword-metrics/research", json={"keywords": ["term"]})
+    assert response.status_code == 200
+    assert response.json()["unmapped_count"] == 1
+    app.dependency_overrides.clear(); db.close()
+
+
+def test_get_evidence_retrieval(monkeypatch):
+    client, db = _client(monkeypatch)
+    evidence = KeywordMetricEvidence(query_id="q", submitted_keyword="term", provider_keyword="term", normalized_keyword="term", provider="mock", source_kind="mock", mapping_status="MAPPED")
+    db.add(evidence); db.commit()
+    response = client.get(f"/api/v1/keyword-metrics/{evidence.id}")
+    assert response.status_code == 200 and response.json()["submitted_keyword"] == "term"
+    app.dependency_overrides.clear(); db.close()

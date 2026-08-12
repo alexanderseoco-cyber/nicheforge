@@ -8,6 +8,9 @@ class KeywordMetricRequest:
     keyword: str
     location_name: str | None = None
     language_code: str = "en"
+    country_code: str = "US"
+    location_target: dict | None = None
+    targeting_mode: str = "keyword_and_geo"
 
 
 @dataclass
@@ -20,6 +23,11 @@ class KeywordMetricResult:
     monthly_history: list[dict] = field(default_factory=list)
     provider: str = "unknown"
     raw: Any = None
+    provider_keyword: str | None = None
+    competition_index: int | None = None
+    low_bid: float | None = None
+    high_bid: float | None = None
+    cost: float | None = None
 
 
 @dataclass

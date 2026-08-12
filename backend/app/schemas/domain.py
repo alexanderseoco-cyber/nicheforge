@@ -2,9 +2,11 @@ from pydantic import BaseModel, Field, ConfigDict
 
 
 class ValidationProfile(BaseModel):
+    population_enabled: bool = True
+    search_volume_enabled: bool = True
     min_population: int = 20_000
     max_population: int = 120_000
-    min_search_volume: int = 300
+    min_search_volume: int | None = 300
     da_threshold: float = 10.0
     required_low_da_count: int = 4
     minimum_weak_domains: int = 4
@@ -77,3 +79,71 @@ class RunOut(BaseModel):
 
 class OverlayRequest(BaseModel):
     urls: list[str] = Field(min_length=1, max_length=20)
+
+
+class KeywordMetricTarget(BaseModel):
+    location_name: str | None = None
+    location_target: dict = Field(default_factory=dict)
+    language_code: str = "en"
+    country_code: str = "US"
+
+
+class KeywordMetricsRequest(BaseModel):
+    keywords: list[str] = Field(min_length=1)
+    target: KeywordMetricTarget = Field(default_factory=KeywordMetricTarget)
+    force_refresh: bool = False
+
+
+class KeywordMetricsPreview(BaseModel):
+    submitted_count: int
+    deduplicated_count: int
+    cache_hits: int
+    provider_requests: int
+    estimated_cost: float | None
+    transport_would_occur: bool
+    provider: str
+
+
+class KeywordMetricResultOut(BaseModel):
+    id: str | None = None
+    submitted_keyword: str
+    provider_keyword: str | None = None
+    provider: str
+    location_name: str | None = None
+    location_target: dict = Field(default_factory=dict)
+    language_code: str
+    country_code: str
+    avg_monthly_searches: int | None = None
+    cpc: float | None = None
+    competition: float | None = None
+    competition_index: int | None = None
+    low_bid: float | None = None
+    high_bid: float | None = None
+    monthly_history: list = Field(default_factory=list)
+    fetched_at: str | None = None
+    fresh_until: str | None = None
+    mapping_status: str
+    cost: float | None = None
+
+
+class KeywordMetricsResearchResponse(BaseModel):
+    batch_id: str
+    status: str
+    provider: str
+    submitted_count: int
+    mapped_count: int
+    unmapped_count: int
+    provider_requests: int
+    results: list[KeywordMetricResultOut]
+
+
+class KeywordMetricsHandoffRequest(BaseModel):
+    evidence_ids: list[str] = Field(min_length=1)
+    validation_profile: ValidationProfile = Field(default_factory=ValidationProfile)
+
+
+class KeywordMetricsHandoffResponse(BaseModel):
+    handoff_ids: list[str]
+    evidence_ids: list[str]
+    selected_count: int
+    provider_requests: int = 0

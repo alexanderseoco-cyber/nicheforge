@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from app.db.session import get_db
 from app.models.entities import ImportBatch, Project, City, Candidate, Run, RunCandidate
-from app.schemas.domain import ProjectCreate, CandidateGenerateRequest, CandidateOut, RunRequest, RunCreate, RunOut, ValidationProfile, OverlayRequest
+from app.schemas.domain import (ProjectCreate, CandidateGenerateRequest, CandidateOut, RunRequest, RunCreate, RunOut, ValidationProfile, OverlayRequest, KeywordMetricsRequest, KeywordMetricsPreview, KeywordMetricsResearchResponse, KeywordMetricResultOut, KeywordMetricsHandoffRequest, KeywordMetricsHandoffResponse)
 from app.services.normalization import normalize_keyword, build_keyword
 from app.services.gates import population_gate
 from app.services.pipeline import process_candidate
@@ -16,8 +16,72 @@ from app.services.run_pipeline import execute_run
 from app.services.proxy_authority import evaluate_run_candidate_proxy
 from app.services.recalculation import preview_recalculation, recalculate, ledger, candidate_history
 from app.services.imports import export_candidate_history_csv, export_project_csv, export_run_csv, import_cities, import_keyword_export, import_manual_evidence, import_manual_moz_csv, import_moz, import_niches
+from app.providers.factory import keyword_metrics_provider
+from app.providers.contracts import KeywordMetricRequest
+from app.models.entities import KeywordMetricQuery, KeywordMetricEvidence, KeywordMetricBatch, KeywordMetricValidationHandoff
+from app.services.keyword_metrics_batch import KeywordMetricsBatchOrchestrator
 
 router = APIRouter(prefix="/api/v1")
+
+
+def _metric_requests(payload: KeywordMetricsRequest):
+    return [KeywordMetricRequest(keyword=k, location_name=payload.target.location_name,
+        language_code=payload.target.language_code, country_code=payload.target.country_code,
+        location_target=payload.target.location_target) for k in payload.keywords]
+
+
+@router.post("/keyword-metrics/preview", response_model=KeywordMetricsPreview)
+async def keyword_metrics_preview(payload: KeywordMetricsRequest):
+    requests = _metric_requests(payload)
+    unique = {(r.keyword.strip().casefold(), r.location_name, r.language_code) for r in requests}
+    provider = keyword_metrics_provider()
+    return KeywordMetricsPreview(submitted_count=len(requests), deduplicated_count=len(unique), cache_hits=0,
+        provider_requests=0, estimated_cost=0.0, transport_would_occur=False, provider=provider.provider_name)
+
+
+@router.post("/keyword-metrics/research", response_model=KeywordMetricsResearchResponse)
+async def keyword_metrics_research(payload: KeywordMetricsRequest, db: Session = Depends(get_db)):
+    requests = _metric_requests(payload); provider = keyword_metrics_provider()
+    batch = KeywordMetricBatch(provider=provider.provider_name, submitted_count=len(requests), status="RUNNING")
+    db.add(batch); db.flush()
+    result = await KeywordMetricsBatchOrchestrator(provider).execute(requests)
+    for request in requests:
+        query = KeywordMetricQuery(submitted_keyword=request.keyword, normalized_keyword=request.keyword.strip().casefold(), location_name=request.location_name, location_target=request.location_target or {}, language_code=request.language_code, country_code=request.country_code, provider=provider.provider_name, status=result.mapping_status.get(request.keyword, "UNMAPPED"))
+        db.add(query); db.flush(); item=result.results.get(request.keyword)
+        if item:
+            db.add(KeywordMetricEvidence(query_id=query.id, submitted_keyword=request.keyword, provider_keyword=item.provider_keyword or item.keyword, normalized_keyword=request.keyword.strip().casefold(), location_name=request.location_name, location_target=request.location_target or {}, language_code=request.language_code, country_code=request.country_code, provider=item.provider, source_kind=item.provider, avg_monthly_searches=item.avg_monthly_searches, competition=item.competition, competition_index=item.competition_index, cpc=item.cpc, low_bid=item.low_bid, high_bid=item.high_bid, monthly_history=item.monthly_history, raw_payload=item.raw or {}, cost=item.cost, mapping_status=result.mapping_status.get(request.keyword, "MAPPED")))
+    batch.returned_count=len(result.results); batch.mapped_count=len(result.results); batch.unmapped_count=result.unmapped_count; batch.status="COMPLETED"; batch.cost=0.0; db.commit()
+    output=[KeywordMetricResultOut(submitted_keyword=k, provider=v.provider, provider_keyword=v.provider_keyword or v.keyword, location_name=payload.target.location_name, location_target=payload.target.location_target, language_code=payload.target.language_code, country_code=payload.target.country_code, avg_monthly_searches=v.avg_monthly_searches, cpc=v.cpc, competition=v.competition, competition_index=v.competition_index, low_bid=v.low_bid, high_bid=v.high_bid, monthly_history=v.monthly_history, mapping_status=result.mapping_status.get(k,"MAPPED"), cost=v.cost) for k,v in result.results.items()]
+    return KeywordMetricsResearchResponse(batch_id=batch.id, status=batch.status, provider=provider.provider_name, submitted_count=len(requests), mapped_count=result.mapped_count if hasattr(result,'mapped_count') else len(result.results), unmapped_count=result.unmapped_count, provider_requests=result.provider_requests, results=output)
+
+
+@router.get("/keyword-metrics")
+def keyword_metrics_list(db: Session = Depends(get_db)):
+    return [{"id": x.id, "keyword": x.submitted_keyword, "provider": x.provider, "status": x.mapping_status, "search_volume": x.avg_monthly_searches, "cost": x.cost, "fetched_at": x.fetched_at} for x in db.query(KeywordMetricEvidence).order_by(KeywordMetricEvidence.fetched_at.desc()).all()]
+
+
+@router.get("/keyword-metrics/{evidence_id}")
+def keyword_metrics_detail(evidence_id: str, db: Session = Depends(get_db)):
+    item = db.get(KeywordMetricEvidence, evidence_id)
+    if not item: raise HTTPException(404, "Keyword metric evidence not found")
+    return item
+
+
+@router.post("/keyword-metrics/refresh", response_model=KeywordMetricsResearchResponse)
+async def keyword_metrics_refresh(payload: KeywordMetricsRequest, db: Session = Depends(get_db)):
+    return await keyword_metrics_research(payload, db)
+
+
+@router.post("/keyword-metrics/send-to-validation", response_model=KeywordMetricsHandoffResponse)
+def keyword_metrics_handoff(payload: KeywordMetricsHandoffRequest, db: Session = Depends(get_db)):
+    handoffs=[]
+    for evidence_id in dict.fromkeys(payload.evidence_ids):
+        evidence=db.get(KeywordMetricEvidence, evidence_id)
+        if not evidence: raise HTTPException(404, f"Keyword metric evidence not found: {evidence_id}")
+        handoff=KeywordMetricValidationHandoff(evidence_id=evidence.id, submitted_keyword=evidence.submitted_keyword, provider=evidence.provider, provider_keyword=evidence.provider_keyword, location_target=evidence.location_target, language_code=evidence.language_code, country_code=evidence.country_code, validation_profile_snapshot=payload.validation_profile.model_dump())
+        db.add(handoff); db.flush(); handoffs.append(handoff)
+    db.commit()
+    return KeywordMetricsHandoffResponse(handoff_ids=[x.id for x in handoffs], evidence_ids=[x.evidence_id for x in handoffs], selected_count=len(handoffs), provider_requests=0)
 
 
 @router.post("/runs/{run_id}/proxy-authority")

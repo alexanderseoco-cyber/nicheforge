@@ -37,6 +37,19 @@ class Settings(BaseSettings):
     census_api_key: str | None = None
     census_api_enabled: bool = False
     census_api_base_url: str = "https://api.census.gov"
+    keyword_metrics_provider: str = "imported"
+    google_ads_enabled: bool = False
+    google_ads_live_approved: bool = False
+    google_ads_developer_token: str | None = None
+    google_ads_customer_id: str | None = None
+    google_ads_login_customer_id: str | None = None
+    google_ads_client_id: str | None = None
+    google_ads_client_secret: str | None = None
+    google_ads_refresh_token: str | None = None
+    keyword_metrics_max_batch_size: int = 10_000
+    keyword_metrics_requests_per_second: float = 1.0
+    keyword_metrics_budget: float | None = None
+    keyword_metrics_freshness_days: int = 30
 
 
 @lru_cache
