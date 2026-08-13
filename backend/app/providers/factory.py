@@ -9,10 +9,10 @@ from app.providers.keyword_metrics import (GoogleAdsKeywordMetricsProvider,
     ImportedKeywordMetricsProvider, MockKeywordMetricsProvider)
 
 
-def keyword_metrics_provider(*, imported_records=None):
+def keyword_metrics_provider(*, imported_records=None, provider_name=None):
     """Select the keyword-metrics provider explicitly; never silently fallback."""
     s = get_settings()
-    name = (s.keyword_metrics_provider or "").strip().lower()
+    name = (provider_name or s.keyword_metrics_provider or "").strip().lower()
     if name == "mock":
         return MockKeywordMetricsProvider()
     if name == "imported":

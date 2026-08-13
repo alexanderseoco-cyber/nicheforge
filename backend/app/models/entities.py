@@ -283,6 +283,64 @@ class KeywordMetricBatch(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class ProviderGeoMapping(Base):
+    """Persistent provider-specific mapping for a canonical city identity."""
+    __tablename__ = "provider_geo_mappings"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    city: Mapped[str] = mapped_column(String(120), index=True)
+    state_code: Mapped[str] = mapped_column(String(8), index=True)
+    country_code: Mapped[str] = mapped_column(String(2), default="US", index=True)
+    provider: Mapped[str] = mapped_column(String(80), index=True)
+    criterion_id: Mapped[str] = mapped_column(String(80))
+    resource_name: Mapped[str] = mapped_column(String(200))
+    provider_name: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    canonical_name: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    target_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    provider_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    mapping_status: Mapped[str] = mapped_column(String(40), default="MAPPED")
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    fresh_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    provenance: Mapped[dict] = mapped_column(JSON, default=dict)
+    __table_args__ = (UniqueConstraint("city", "state_code", "country_code", "provider", name="uq_provider_geo_identity"),)
+
+
+class ProviderCustomerMetadata(Base):
+    __tablename__ = "provider_customer_metadata"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    provider: Mapped[str] = mapped_column(String(80), index=True)
+    customer_id: Mapped[str] = mapped_column(String(40), index=True)
+    currency_code: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    time_zone: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    fresh_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    provenance: Mapped[dict] = mapped_column(JSON, default=dict)
+    __table_args__ = (UniqueConstraint("provider", "customer_id", name="uq_provider_customer_metadata"),)
+
+
+class KeywordMetricBatchItem(Base):
+    """Stable per-keyword/location state used for resumable batch execution."""
+    __tablename__ = "keyword_metric_batch_items"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    batch_id: Mapped[str] = mapped_column(ForeignKey("keyword_metric_batches.id"), index=True)
+    keyword: Mapped[str] = mapped_column(String(400), index=True)
+    city: Mapped[str] = mapped_column(String(120), index=True)
+    state_code: Mapped[str] = mapped_column(String(8), index=True)
+    country_code: Mapped[str] = mapped_column(String(2), default="US")
+    location_identity: Mapped[str] = mapped_column(String(300), index=True)
+    status: Mapped[str] = mapped_column(String(40), default="PENDING")
+    geo_mapping_id: Mapped[str | None] = mapped_column(ForeignKey("provider_geo_mappings.id"), nullable=True)
+    evidence_id: Mapped[str | None] = mapped_column(ForeignKey("keyword_metric_evidence.id"), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    geo_diagnostic: Mapped[dict] = mapped_column(JSON, default=dict)
+    policy_status: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    policy_minimum_sv: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    policy_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("batch_id", "keyword", "location_identity", name="uq_keyword_metric_batch_item"),)
+
+
 class KeywordMetricValidationHandoff(Base):
     """Explicit subset handoff; points to immutable evidence, never copies it."""
     __tablename__ = "keyword_metric_validation_handoffs"

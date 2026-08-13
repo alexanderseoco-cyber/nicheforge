@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from app.db.session import get_db
 from app.models.entities import ImportBatch, Project, City, Candidate, Run, RunCandidate
-from app.schemas.domain import (ProjectCreate, CandidateGenerateRequest, CandidateOut, RunRequest, RunCreate, RunOut, ValidationProfile, OverlayRequest, KeywordMetricsRequest, KeywordMetricsPreview, KeywordMetricsResearchResponse, KeywordMetricResultOut, KeywordMetricsHandoffRequest, KeywordMetricsHandoffResponse)
+from app.schemas.domain import (ProjectCreate, CandidateGenerateRequest, CandidateOut, RunRequest, RunCreate, RunOut, ValidationProfile, OverlayRequest, KeywordMetricsRequest, KeywordMetricsPreview, KeywordMetricsResearchResponse, KeywordMetricResultOut, KeywordMetricsHandoffRequest, KeywordMetricsHandoffResponse, KeywordMetricsBatchRequest)
 from app.services.normalization import normalize_keyword, build_keyword
 from app.services.gates import population_gate
 from app.services.pipeline import process_candidate
@@ -20,6 +20,9 @@ from app.providers.factory import keyword_metrics_provider
 from app.providers.contracts import KeywordMetricRequest
 from app.models.entities import KeywordMetricQuery, KeywordMetricEvidence, KeywordMetricBatch, KeywordMetricValidationHandoff
 from app.services.keyword_metrics_batch import KeywordMetricsBatchOrchestrator
+from app.services.keyword_metrics_multi_city import MultiCityKeywordMetricsOrchestrator, StructuredLocation
+from app.providers.google_ads_geo import GoogleAdsGeoTargetResolver
+from app.core.config import get_settings
 
 router = APIRouter(prefix="/api/v1")
 
@@ -70,6 +73,33 @@ def keyword_metrics_detail(evidence_id: str, db: Session = Depends(get_db)):
 @router.post("/keyword-metrics/refresh", response_model=KeywordMetricsResearchResponse)
 async def keyword_metrics_refresh(payload: KeywordMetricsRequest, db: Session = Depends(get_db)):
     return await keyword_metrics_research(payload, db)
+
+
+@router.post("/keyword-metrics/research-batch")
+async def keyword_metrics_research_batch(payload: KeywordMetricsBatchRequest, db: Session = Depends(get_db)):
+    """Resumable structured-location research; policy is calculated without transport."""
+    if payload.provider != "google_ads":
+        raise HTTPException(400, "research-batch requires explicit provider=google_ads")
+    provider = keyword_metrics_provider(provider_name=payload.provider)
+    batch = KeywordMetricBatch(provider=provider.provider_name, submitted_count=len(payload.keywords) * len(payload.locations), status="RUNNING")
+    db.add(batch); db.flush()
+    settings = get_settings()
+    resolver = GoogleAdsGeoTargetResolver(
+        client_factory=getattr(provider, "_client", None),
+        enabled=settings.google_ads_enabled, live_approved=settings.google_ads_live_approved,
+        credentials_configured=all((settings.google_ads_developer_token, settings.google_ads_client_id, settings.google_ads_client_secret, settings.google_ads_refresh_token, settings.google_ads_customer_id, settings.google_ads_login_customer_id)),
+        freshness_days=settings.keyword_metrics_freshness_days)
+    locations = [StructuredLocation(x.city, x.state_code, x.country_code) for x in payload.locations]
+    from app.providers.google_ads_keyword_metrics import language_resource
+    from app.services.currency_normalization import ExchangeRateApiProvider
+    fx_provider = ExchangeRateApiProvider(cache={})
+    report = await MultiCityKeywordMetricsOrchestrator(db, provider, resolver, fx_provider=fx_provider, customer_id=settings.google_ads_customer_id, provider_currency_code=settings.google_ads_currency_code, minimum_sv=payload.minimum_sv or 260, freshness_days=settings.keyword_metrics_freshness_days).run(payload.keywords, locations, batch=batch)
+    for row in report["results"]:
+        evidence = db.get(KeywordMetricEvidence, row.get("evidence_id")) if row.get("evidence_id") else None
+        if evidence:
+            sv = evidence.avg_monthly_searches
+            row["rank_rent_status"] = "MISSING_EVIDENCE" if sv is None else ("ELIGIBLE_FOR_RANK_RENT_PIPELINE" if payload.minimum_sv is None or sv >= payload.minimum_sv else "BELOW_SV_THRESHOLD")
+    return {"batch_id": batch.id, "status": batch.status, "provider": provider.provider_name, "submitted_count": batch.submitted_count, **report}
 
 
 @router.post("/keyword-metrics/send-to-validation", response_model=KeywordMetricsHandoffResponse)

@@ -94,6 +94,22 @@ class KeywordMetricsRequest(BaseModel):
     force_refresh: bool = False
 
 
+class KeywordMetricsBatchLocation(BaseModel):
+    city: str
+    state_code: str
+    country_code: str = "US"
+
+
+class KeywordMetricsBatchRequest(BaseModel):
+    keywords: list[str] = Field(min_length=1)
+    locations: list[KeywordMetricsBatchLocation] = Field(min_length=1)
+    language_code: str = "en"
+    country_code: str = "US"
+    minimum_sv: int | None = 260
+    force_refresh: bool = False
+    provider: str = "google_ads"
+
+
 class KeywordMetricsPreview(BaseModel):
     submitted_count: int
     deduplicated_count: int
