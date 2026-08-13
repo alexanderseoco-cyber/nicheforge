@@ -119,6 +119,13 @@ class KeywordMetricResultOut(BaseModel):
     competition_index: int | None = None
     low_bid: float | None = None
     high_bid: float | None = None
+    provider_currency_code: str | None = None
+    usd_cpc: float | None = None
+    usd_low_bid: float | None = None
+    usd_high_bid: float | None = None
+    fx_rate: float | None = None
+    fx_rate_date: str | None = None
+    fx_source: str | None = None
     monthly_history: list = Field(default_factory=list)
     fetched_at: str | None = None
     fresh_until: str | None = None

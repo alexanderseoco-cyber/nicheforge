@@ -40,3 +40,14 @@ def test_monthly_history_preserves_zero_and_sorts_enum_months_across_years():
         {"year": 2026, "month": 1, "searches": 0},
         {"year": 2026, "month": 2, "searches": 3},
     ]
+
+
+def test_google_response_adapter_does_not_drop_already_normalized_history():
+    result = map_historical_metrics_response({"results": [{"text": "fancy text generator", "keyword_metrics": {
+        "avg_monthly_searches": 74000,
+        "monthly_search_volumes": [{"year": 2025, "month": 9, "searches": 74000}, {"year": 2026, "month": 8, "searches": 74000}],
+    }}]})[0]
+    assert result.monthly_history == [
+        {"year": 2025, "month": 9, "searches": 74000},
+        {"year": 2026, "month": 8, "searches": 74000},
+    ]

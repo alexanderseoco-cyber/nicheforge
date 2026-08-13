@@ -26,6 +26,7 @@ def keyword_metrics_provider(*, imported_records=None):
             developer_token=s.google_ads_developer_token, client_id=s.google_ads_client_id,
             client_secret=s.google_ads_client_secret, refresh_token=s.google_ads_refresh_token,
             customer_id=s.google_ads_customer_id, login_customer_id=s.google_ads_login_customer_id,
+            provider_currency_code=s.google_ads_currency_code,
         )
     if name == "dataforseo":
         return DataForSEOKeywordProvider(s.dataforseo_login or "", s.dataforseo_password or "")

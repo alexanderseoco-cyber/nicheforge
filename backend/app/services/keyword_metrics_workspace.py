@@ -37,5 +37,5 @@ def export_rows(evidence: list[KeywordMetricEvidence]) -> list[dict]:
         "provider": x.provider, "location": x.location_name, "language": x.language_code,
         "country": x.country_code, "search_volume": x.avg_monthly_searches, "monthly_history": x.monthly_history or [], "cpc": x.cpc,
         "competition": x.competition, "competition_index": x.competition_index,
-        "low_bid": x.low_bid, "high_bid": x.high_bid, "mapping_status": x.mapping_status,
+        "low_bid": x.low_bid, "high_bid": x.high_bid, "provider_currency_code": x.provider_currency_code, "usd_cpc": x.usd_cpc, "usd_low_bid": x.usd_low_bid, "usd_high_bid": x.usd_high_bid, "fx_rate": x.fx_rate, "fx_rate_date": x.fx_rate_date, "fx_source": x.fx_source, "mapping_status": x.mapping_status,
         "fetched_at": x.fetched_at.isoformat() if x.fetched_at else None} for x in evidence]

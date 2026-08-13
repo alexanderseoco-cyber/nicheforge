@@ -51,7 +51,10 @@ async def test_google_v27_uses_request_object_invocation():
     class Client:
         enums = type("Enums", (), {"KeywordPlanNetworkEnum": type("Network", (), {"GOOGLE_SEARCH": 1})})
         def __init__(self): self.service = Service()
-        def get_type(self, name): assert name == "GenerateKeywordHistoricalMetricsRequest"; return Request()
+        def get_type(self, name):
+            if name == "GenerateKeywordHistoricalMetricsRequest": return Request()
+            if name == "HistoricalMetricsOptions": return type("Options", (), {"include_average_cpc": False})()
+            raise AssertionError(name)
         def get_service(self, name): assert name == "KeywordPlanIdeaService"; return self.service
 
     client = Client()
@@ -63,3 +66,4 @@ async def test_google_v27_uses_request_object_invocation():
     await provider.fetch([KeywordMetricRequest("plumber")])
     assert client.service.request.customer_id == "4553815994"
     assert client.service.request.keywords == ["plumber"]
+    assert client.service.request.historical_metrics_options.include_average_cpc is True

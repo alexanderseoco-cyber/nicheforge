@@ -1,10 +1,11 @@
 "use client";
 import React, {useState} from "react";
+import {formatUsd} from "../lib/formatCurrency";
 
 const API = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1";
 
 type TrendPoint = {year:number;month:number;searches:number};
-type Candidate = {id:string;keyword:string;city?:string;state?:string;population?:number;search_volume?:number;monthly_history?:TrendPoint[];cpc?:number;low_da_count?:number;status:string;automatic_pass?:boolean;reason_codes:string[]};
+type Candidate = {id:string;keyword:string;city?:string;state?:string;population?:number;search_volume?:number;monthly_history?:TrendPoint[];usd_cpc?:number|null;usd_low_bid?:number|null;usd_high_bid?:number|null;low_da_count?:number;status:string;automatic_pass?:boolean;reason_codes:string[]};
 
 export default function Page(){
   const [projectId,setProjectId]=useState("");
@@ -27,8 +28,8 @@ export default function Page(){
     </section>
     <p>Project: {projectId || "not created"}</p>
     <div style={{overflowX:"auto",background:"white",borderRadius:12}}><table style={{borderCollapse:"collapse",width:"100%"}}>
-      <thead><tr>{["Keyword","City","Pop","SV","12M Trend","CPC","DA< threshold","Status","Reasons"].map(x=><th key={x} style={{textAlign:"left",padding:8,borderBottom:"1px solid #ddd"}}>{x}</th>)}</tr></thead>
-      <tbody>{rows.map(r=><tr key={r.id}><td>{r.keyword}</td><td>{r.city} {r.state}</td><td>{r.population}</td><td>{r.search_volume}</td><td><details><summary>{r.monthly_history?.length || 0} months</summary>{(r.monthly_history || []).map(p=><div key={`${p.year}-${p.month}`}>{p.year}-{String(p.month).padStart(2,"0")}: {p.searches}</div>)}</details></td><td>{r.cpc}</td><td>{r.low_da_count}</td><td>{r.status}</td><td>{r.reason_codes?.join(", ")}</td></tr>)}</tbody>
+      <thead><tr>{["Keyword","City","Pop","SV","12M Trend","CPC (USD)","Low bid (USD)","High bid (USD)","DA< threshold","Status","Reasons"].map(x=><th key={x} style={{textAlign:"left",padding:8,borderBottom:"1px solid #ddd"}}>{x}</th>)}</tr></thead>
+      <tbody>{rows.map(r=><tr key={r.id}><td>{r.keyword}</td><td>{r.city} {r.state}</td><td>{r.population}</td><td>{r.search_volume}</td><td><details><summary>{r.monthly_history?.length || 0} months</summary>{(r.monthly_history || []).map(p=><div key={`${p.year}-${p.month}`}>{p.year}-{String(p.month).padStart(2,"0")}: {p.searches}</div>)}</details></td><td>{formatUsd(r.usd_cpc)}</td><td>{formatUsd(r.usd_low_bid)}</td><td>{formatUsd(r.usd_high_bid)}</td><td>{r.low_da_count}</td><td>{r.status}</td><td>{r.reason_codes?.join(", ")}</td></tr>)}</tbody>
     </table></div>
   </main>;
 }

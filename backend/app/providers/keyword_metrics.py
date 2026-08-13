@@ -61,7 +61,8 @@ class GoogleAdsKeywordMetricsProvider:
                  credentials_configured: bool = False, developer_token: str | None = None,
                  client_id: str | None = None, client_secret: str | None = None,
                  refresh_token: str | None = None, customer_id: str | None = None,
-                 login_customer_id: str | None = None, client_factory=None):
+                 login_customer_id: str | None = None, client_factory=None,
+                 provider_currency_code: str | None = None):
         self.enabled = enabled
         self.live_approved = live_approved
         self.credentials_configured = credentials_configured
@@ -71,6 +72,7 @@ class GoogleAdsKeywordMetricsProvider:
         self.refresh_token = refresh_token
         self.customer_id = customer_id
         self.login_customer_id = login_customer_id
+        self.provider_currency_code = provider_currency_code
         self.client_factory = client_factory
 
     async def fetch(self, requests: list[KeywordMetricRequest]) -> list[KeywordMetricResult]:
@@ -86,7 +88,10 @@ class GoogleAdsKeywordMetricsProvider:
         request = build_google_ads_request(client, self.customer_id, requests)
         response = service.generate_keyword_historical_metrics(request=request, retry=None)
         from app.providers.google_ads_keyword_metrics import map_google_ads_response
-        return map_google_ads_response(response)
+        results = map_google_ads_response(response)
+        for result in results:
+            result.provider_currency_code = self.provider_currency_code
+        return results
 
     def _client(self):
         if self.client_factory:

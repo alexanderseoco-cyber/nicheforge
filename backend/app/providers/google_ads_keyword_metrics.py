@@ -12,7 +12,8 @@ def normalize_monthly_history(values) -> list[dict]:
     for value in values or []:
         year = value.get("year") if isinstance(value, dict) else getattr(value, "year", None)
         month = value.get("month") if isinstance(value, dict) else getattr(value, "month", None)
-        searches = value.get("monthly_searches") if isinstance(value, dict) else getattr(value, "monthly_searches", None)
+        searches = (value.get("monthly_searches", value.get("searches"))
+                    if isinstance(value, dict) else getattr(value, "monthly_searches", getattr(value, "searches", None)))
         if year is None or month is None or searches is None:
             continue
         if hasattr(month, "name"):
@@ -36,6 +37,9 @@ def build_google_ads_request(client, customer_id: str, requests: list[KeywordMet
     )
     request.language = language_resource(first.language_code)
     request.keyword_plan_network = client.enums.KeywordPlanNetworkEnum.GOOGLE_SEARCH
+    options = client.get_type("HistoricalMetricsOptions")
+    options.include_average_cpc = True
+    request.historical_metrics_options = options
     return request
 
 
