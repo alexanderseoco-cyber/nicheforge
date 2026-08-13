@@ -18,7 +18,15 @@ def keyword_metrics_provider(*, imported_records=None):
     if name == "imported":
         return ImportedKeywordMetricsProvider(imported_records or {})
     if name == "google_ads":
-        return GoogleAdsKeywordMetricsProvider(enabled=s.google_ads_enabled, live_approved=s.google_ads_live_approved, credentials_configured=bool(s.google_ads_developer_token and s.google_ads_customer_id))
+        return GoogleAdsKeywordMetricsProvider(
+            enabled=s.google_ads_enabled, live_approved=s.google_ads_live_approved,
+            credentials_configured=all((s.google_ads_developer_token, s.google_ads_client_id,
+                s.google_ads_client_secret, s.google_ads_refresh_token,
+                s.google_ads_customer_id, s.google_ads_login_customer_id)),
+            developer_token=s.google_ads_developer_token, client_id=s.google_ads_client_id,
+            client_secret=s.google_ads_client_secret, refresh_token=s.google_ads_refresh_token,
+            customer_id=s.google_ads_customer_id, login_customer_id=s.google_ads_login_customer_id,
+        )
     if name == "dataforseo":
         return DataForSEOKeywordProvider(s.dataforseo_login or "", s.dataforseo_password or "")
     raise ValueError(f"Unknown keyword metrics provider: {name!r}")

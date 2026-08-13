@@ -33,3 +33,33 @@ async def test_mock_provider_returns_zero_cost_and_provider_identity():
     assert result[0].provider_keyword == "Tree Removal"
     assert result[0].avg_monthly_searches == 42
     assert result[0].cost == 0.0
+
+
+@pytest.mark.asyncio
+async def test_google_v27_uses_request_object_invocation():
+    class Request:
+        def __init__(self):
+            self.customer_id = None; self.keywords = []; self.geo_target_constants = []
+            self.language = None; self.keyword_plan_network = None
+
+    class Service:
+        def __init__(self): self.request = None
+        def generate_keyword_historical_metrics(self, request=None, *, retry=None):
+            self.request = request
+            return type("Response", (), {"results": []})()
+
+    class Client:
+        enums = type("Enums", (), {"KeywordPlanNetworkEnum": type("Network", (), {"GOOGLE_SEARCH": 1})})
+        def __init__(self): self.service = Service()
+        def get_type(self, name): assert name == "GenerateKeywordHistoricalMetricsRequest"; return Request()
+        def get_service(self, name): assert name == "KeywordPlanIdeaService"; return self.service
+
+    client = Client()
+    provider = GoogleAdsKeywordMetricsProvider(
+        enabled=True, live_approved=True, credentials_configured=True,
+        customer_id="4553815994", login_customer_id="2888497931",
+        client_factory=lambda: client,
+    )
+    await provider.fetch([KeywordMetricRequest("plumber")])
+    assert client.service.request.customer_id == "4553815994"
+    assert client.service.request.keywords == ["plumber"]

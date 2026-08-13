@@ -12,3 +12,10 @@ def test_profiles_can_disable_search_volume_and_population_independently():
     profile=ValidationProfile(search_volume_enabled=False, min_search_volume=None, population_enabled=False)
     assert search_volume_gate(None, profile).passed
     assert population_gate(1, profile).passed
+
+
+def test_below_threshold_is_policy_status_not_invalid_evidence():
+    decision = search_volume_gate(10, ValidationProfile(min_search_volume=260))
+    assert decision.passed is False
+    assert decision.status == "BELOW_SV_THRESHOLD"
+    assert decision.reason_codes == ["SV_BELOW_THRESHOLD"]

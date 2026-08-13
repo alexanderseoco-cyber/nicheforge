@@ -25,7 +25,7 @@ def search_volume_gate(search_volume: int | None, profile: ValidationProfile) ->
     if search_volume is None:
         return GateDecision(False, ["SV_MISSING"], "MISSING_EVIDENCE")
     if search_volume < profile.min_search_volume:
-        return GateDecision(False, ["SV_BELOW_THRESHOLD"])
+        return GateDecision(False, ["SV_BELOW_THRESHOLD"], "BELOW_SV_THRESHOLD")
     return GateDecision(True, [])
 
 

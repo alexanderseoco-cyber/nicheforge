@@ -35,7 +35,7 @@ def stale_evidence_ids(evidence: list[KeywordMetricEvidence], now: datetime | No
 def export_rows(evidence: list[KeywordMetricEvidence]) -> list[dict]:
     return [{"keyword": x.submitted_keyword, "provider_keyword": x.provider_keyword,
         "provider": x.provider, "location": x.location_name, "language": x.language_code,
-        "country": x.country_code, "search_volume": x.avg_monthly_searches, "cpc": x.cpc,
+        "country": x.country_code, "search_volume": x.avg_monthly_searches, "monthly_history": x.monthly_history or [], "cpc": x.cpc,
         "competition": x.competition, "competition_index": x.competition_index,
         "low_bid": x.low_bid, "high_bid": x.high_bid, "mapping_status": x.mapping_status,
         "fetched_at": x.fetched_at.isoformat() if x.fetched_at else None} for x in evidence]
