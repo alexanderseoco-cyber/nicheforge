@@ -1,0 +1,1 @@
+import {Placeholder} from "../../components/Placeholder"; export default function Page(){return <Placeholder active="Candidates" title="Candidates" description="Review candidates moving through validation."/>}

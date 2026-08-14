@@ -22,3 +22,13 @@ async def test_fx_provider_caches_one_daily_pair():
     value, fx = normalize_to_usd(744.940438, "PKR", rate=first)
     assert round(value, 8) == round(744.940438 * 0.0036, 8)
     assert fx.source == "exchangerate_api_open"
+
+
+@pytest.mark.asyncio
+async def test_latest_cache_survives_provider_effective_date_differing_from_request_date():
+    client = Client(); provider = ExchangeRateApiProvider(client=client)
+    first = await provider.get_rate("PKR", "USD")
+    second = await provider.get_rate("PKR", "USD")
+    assert first.rate_date == "2026-08-14"
+    assert second is first
+    assert client.calls == 1 and provider.network_calls == 1

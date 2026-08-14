@@ -1,0 +1,1 @@
+import {Placeholder} from "../../components/Placeholder"; export default function Page(){return <Placeholder active="Providers" title="Providers" description="Review configured research data sources."/>}

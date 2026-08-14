@@ -1,0 +1,1 @@
+import {Placeholder} from "../../components/Placeholder"; export default function Page(){return <Placeholder active="Geo Targets" title="Geo Targets" description="Review provider-backed location mappings."/>}

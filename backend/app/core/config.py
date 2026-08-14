@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     google_ads_client_id: str | None = None
     google_ads_client_secret: str | None = None
     google_ads_refresh_token: str | None = None
+    # Optional operator override only.  There is deliberately no USD default:
+    # Google geo targeting and customer monetary currency are independent.
     google_ads_currency_code: str | None = None
     keyword_metrics_max_batch_size: int = 10_000
     keyword_metrics_requests_per_second: float = 1.0

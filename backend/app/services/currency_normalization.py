@@ -32,12 +32,18 @@ class ExchangeRateApiProvider(CurrencyRateProvider):
     async def get_rate(self, from_currency: str, to_currency: str, date: str | None = None) -> FxRate | None:
         source, target = from_currency.upper(), to_currency.upper()
         day = date or __import__("datetime").date.today().isoformat()
+        # ``date=None`` means latest/current.  Its cache identity must not be
+        # tied to either today's request date or the provider's effective date.
+        # Those are different semantics and providers commonly return the last
+        # published business day.
+        latest_key = (source, target, "latest", self.provider_name)
         key = (source, target, day, self.provider_name)
-        if key in self.cache:
-            return self.cache[key]
+        lookup_key = latest_key if date is None else key
+        if lookup_key in self.cache:
+            return self.cache[lookup_key]
         if source == target:
             rate = FxRate(source, target, 1.0, day, "identity")
-            self.cache[key] = rate
+            self.cache[lookup_key] = rate
             return rate
         self.network_calls += 1
         response = await self.client.get(f"{self.base_url}/{source}")
@@ -52,7 +58,10 @@ class ExchangeRateApiProvider(CurrencyRateProvider):
         except (TypeError, ValueError, IndexError):
             rate_date = day
         rate = FxRate(source, target, float(value), rate_date, self.provider_name)
-        self.cache[key] = rate
+        self.cache[lookup_key] = rate
+        # Retain the provider's effective date for explicit-date reuse without
+        # making it the identity of a latest/current observation.
+        self.cache.setdefault((source, target, rate_date, self.provider_name), rate)
         return rate
 
 

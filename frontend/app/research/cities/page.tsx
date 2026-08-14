@@ -1,0 +1,1 @@
+import {Placeholder} from "../../components/Placeholder"; export default function Page(){return <Placeholder active="City Research" title="City Research" description="Organize location-targeted research."/>}

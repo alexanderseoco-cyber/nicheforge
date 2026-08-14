@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import json
 
 from app.providers.contracts import KeywordMetricRequest, KeywordMetricResult
 
@@ -45,7 +46,9 @@ class KeywordMetricsBatchOrchestrator:
 
     @staticmethod
     def _key(request: KeywordMetricRequest):
-        return (request.keyword.strip().casefold(), request.location_name, request.language_code)
+        target = json.dumps(request.location_target or {}, sort_keys=True, separators=(",", ":"))
+        return (request.keyword.strip().casefold(), request.location_name, request.language_code,
+                request.country_code.upper(), target)
 
     async def execute(self, requests: list[KeywordMetricRequest]) -> KeywordMetricsBatchResult:
         unique = {}
@@ -72,6 +75,14 @@ class KeywordMetricsBatchOrchestrator:
             for request in chunk:
                 item = by_keyword.get(request.keyword)
                 if item is None or (isinstance(item.raw, dict) and item.raw.get("mapping_status") == "NOT_FOUND"):
+                    result.results[request.keyword] = KeywordMetricResult(
+                        keyword=request.keyword,
+                        provider_keyword=None,
+                        avg_monthly_searches=None,
+                        provider=getattr(self.provider, "provider_name", "provider"),
+                        raw={"mapping_status": "UNMAPPED"},
+                        cost=0.0,
+                    )
                     result.mapping_status[request.keyword] = "UNMAPPED"
                     result.unmapped_count += 1
                     continue

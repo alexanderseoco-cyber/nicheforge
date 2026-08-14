@@ -9,6 +9,7 @@ from app.models.entities import KeywordMetricBatch, KeywordMetricBatchItem, Keyw
 from app.providers.contracts import KeywordMetricRequest
 from app.services.keyword_metrics_batch import KeywordMetricsBatchOrchestrator
 from app.services.currency_normalization import normalize_to_usd
+from app.services.customer_currency import resolve_cached_customer_currency
 
 
 class SystemicProviderFailure(BaseException):
@@ -64,10 +65,18 @@ class MultiCityKeywordMetricsOrchestrator:
                   "historical_cache_hits": 0, "historical_live_requests": 0, "historical_successes": 0,
                   "historical_failures": 0, "fx_cache_hits": 0, "fx_live_requests": 0, "fx_failures": 0, "automatic_retries": 0, "other_provider_requests": 0,
                   "results": [], "failed_items": []}
-        currency = self.provider_currency_code
-        if not currency and self.customer_id:
-            metadata = self.db.query(ProviderCustomerMetadata).filter_by(provider=self.provider.provider_name, customer_id=self.customer_id).first()
-            currency = metadata.currency_code if metadata else None
+        currency_resolution = resolve_cached_customer_currency(
+            self.db, provider=self.provider.provider_name, customer_id=self.customer_id,
+            override=self.provider_currency_code,
+        )
+        currency = currency_resolution.currency_code
+        report.update({
+            "currency_source": currency_resolution.source,
+            "currency_metadata_cache_hit": currency_resolution.cache_hit,
+            "google_customer_currency_resolved": bool(currency),
+            "customer_id": self.customer_id,
+            "fx_required": bool(currency and currency.upper() != "USD"),
+        })
         fx_rate = None
         circuit_signature = None
         systemic_seen = 0

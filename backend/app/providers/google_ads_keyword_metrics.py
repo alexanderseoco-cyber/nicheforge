@@ -32,9 +32,7 @@ def build_google_ads_request(client, customer_id: str, requests: list[KeywordMet
     request = client.get_type("GenerateKeywordHistoricalMetricsRequest")
     request.customer_id = customer_id
     request.keywords.extend([item.keyword for item in requests])
-    request.geo_target_constants.extend(
-        geo_resource(x) for x in list((first.location_target or {}).get("geo_target_ids", []))
-    )
+    request.geo_target_constants.extend(request_geo_resources(first))
     request.language = language_resource(first.language_code)
     request.keyword_plan_network = client.enums.KeywordPlanNetworkEnum.GOOGLE_SEARCH
     options = client.get_type("HistoricalMetricsOptions")
@@ -92,20 +90,35 @@ def language_resource(language_code: str) -> str:
     return f"languageConstants/{known.get(language_code.casefold(), language_code)}"
 
 
+# Google Ads country geo targets are provider-owned identifiers; they are not
+# derivable from ISO-3166 codes. Keep this explicit and auditable.
+from app.providers.google_country_registry import country_resource
+
+
 def geo_resource(geo_id: str) -> str:
     criterion_id = geo_id.rsplit("/", 1)[-1]
     return f"geoTargetConstants/{criterion_id}"
+
+
+def request_geo_resources(request: KeywordMetricRequest) -> list[str]:
+    target = request.location_target or {}
+    geo_ids = list(target.get("geo_target_ids", []))
+    if not geo_ids and target.get("target_type") != "WORLDWIDE":
+        country_code = target.get("country_code") or request.country_code
+        if country_code and country_code.upper() != "WORLD":
+            geo_ids = [country_resource(country_code)]
+    return [geo_resource(value) for value in geo_ids]
 
 
 def build_historical_metrics_request(customer_id: str, requests: list[KeywordMetricRequest]) -> GoogleAdsHistoricalMetricsRequest:
     if not requests:
         raise ValueError("At least one keyword is required")
     first = requests[0]
-    geo_ids = list((first.location_target or {}).get("geo_target_ids", []))
-    if len(geo_ids) > 10:
+    geo_resources = request_geo_resources(first)
+    if len(geo_resources) > 10:
         raise ValueError("Google Ads supports at most 10 geo targets per request")
     return GoogleAdsHistoricalMetricsRequest(customer_id=customer_id,
-        keywords=[r.keyword for r in requests], geo_target_constants=[geo_resource(x) for x in geo_ids],
+        keywords=[r.keyword for r in requests], geo_target_constants=geo_resources,
         language=language_resource(first.language_code))
 
 

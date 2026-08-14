@@ -18,13 +18,20 @@ from app.services.recalculation import preview_recalculation, recalculate, ledge
 from app.services.imports import export_candidate_history_csv, export_project_csv, export_run_csv, import_cities, import_keyword_export, import_manual_evidence, import_manual_moz_csv, import_moz, import_niches
 from app.providers.factory import keyword_metrics_provider
 from app.providers.contracts import KeywordMetricRequest
-from app.models.entities import KeywordMetricQuery, KeywordMetricEvidence, KeywordMetricBatch, KeywordMetricValidationHandoff
+from app.models.entities import KeywordMetricQuery, KeywordMetricEvidence, KeywordMetricBatch, KeywordMetricValidationHandoff, ProviderCountryGeoMapping
 from app.services.keyword_metrics_batch import KeywordMetricsBatchOrchestrator
 from app.services.keyword_metrics_multi_city import MultiCityKeywordMetricsOrchestrator, StructuredLocation
 from app.providers.google_ads_geo import GoogleAdsGeoTargetResolver
 from app.core.config import get_settings
+from app.providers.keyword_metrics_safety import KeywordMetricsGuardError
+from app.services.currency_normalization import normalize_to_usd
 
 router = APIRouter(prefix="/api/v1")
+
+@router.get("/geo/countries")
+def country_geo_capabilities(db: Session = Depends(get_db)):
+    rows = db.query(ProviderCountryGeoMapping).filter_by(provider="google_ads", mapping_status="MAPPED").all()
+    return [{"country_code": row.country_code, "provider": row.provider, "criterion_id": row.criterion_id, "resource_name": row.resource_name, "target_type": row.target_type, "status": row.mapping_status, "provenance": row.provenance} for row in rows]
 
 
 def _metric_requests(payload: KeywordMetricsRequest):
@@ -37,25 +44,43 @@ def _metric_requests(payload: KeywordMetricsRequest):
 async def keyword_metrics_preview(payload: KeywordMetricsRequest):
     requests = _metric_requests(payload)
     unique = {(r.keyword.strip().casefold(), r.location_name, r.language_code) for r in requests}
-    provider = keyword_metrics_provider()
+    provider = keyword_metrics_provider(provider_name=payload.provider)
     return KeywordMetricsPreview(submitted_count=len(requests), deduplicated_count=len(unique), cache_hits=0,
         provider_requests=0, estimated_cost=0.0, transport_would_occur=False, provider=provider.provider_name)
 
 
 @router.post("/keyword-metrics/research", response_model=KeywordMetricsResearchResponse)
 async def keyword_metrics_research(payload: KeywordMetricsRequest, db: Session = Depends(get_db)):
-    requests = _metric_requests(payload); provider = keyword_metrics_provider()
+    requests = _metric_requests(payload); provider = keyword_metrics_provider(provider_name=payload.provider)
     batch = KeywordMetricBatch(provider=provider.provider_name, submitted_count=len(requests), status="RUNNING")
     db.add(batch); db.flush()
-    result = await KeywordMetricsBatchOrchestrator(provider).execute(requests)
+    try:
+        result = await KeywordMetricsBatchOrchestrator(provider).execute(requests)
+    except KeywordMetricsGuardError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        # Keep provider/runtime failures JSON-shaped so browser clients receive
+        # a readable API error instead of a CORS-looking network failure.
+        safe_type = type(exc).__name__
+        raise HTTPException(status_code=502, detail=f"Google Ads search-volume request failed ({safe_type}).") from exc
     for request in requests:
         query = KeywordMetricQuery(submitted_keyword=request.keyword, normalized_keyword=request.keyword.strip().casefold(), location_name=request.location_name, location_target=request.location_target or {}, language_code=request.language_code, country_code=request.country_code, provider=provider.provider_name, status=result.mapping_status.get(request.keyword, "UNMAPPED"))
         db.add(query); db.flush(); item=result.results.get(request.keyword)
-        if item:
+        if item and result.mapping_status.get(request.keyword) != "UNMAPPED":
+            # Never infer currency from the target country or a USD default.
+            # Unknown currency keeps provider amounts, while USD fields remain null.
+            currency = item.provider_currency_code
+            item.provider_currency_code = currency
+            item.usd_cpc, cpc_rate = normalize_to_usd(item.cpc, currency, rate=None)
+            item.usd_low_bid, low_rate = normalize_to_usd(item.low_bid, currency, rate=None)
+            item.usd_high_bid, high_rate = normalize_to_usd(item.high_bid, currency, rate=None)
+            rate = cpc_rate or low_rate or high_rate
+            if rate:
+                item.fx_rate, item.fx_rate_date, item.fx_source = rate.rate, rate.rate_date, rate.source
             db.add(KeywordMetricEvidence(query_id=query.id, submitted_keyword=request.keyword, provider_keyword=item.provider_keyword or item.keyword, normalized_keyword=request.keyword.strip().casefold(), location_name=request.location_name, location_target=request.location_target or {}, language_code=request.language_code, country_code=request.country_code, provider=item.provider, source_kind=item.provider, avg_monthly_searches=item.avg_monthly_searches, competition=item.competition, competition_index=item.competition_index, cpc=item.cpc, low_bid=item.low_bid, high_bid=item.high_bid, provider_currency_code=item.provider_currency_code, usd_cpc=item.usd_cpc, usd_low_bid=item.usd_low_bid, usd_high_bid=item.usd_high_bid, fx_rate=item.fx_rate, fx_rate_date=item.fx_rate_date, fx_source=item.fx_source, monthly_history=item.monthly_history, raw_payload=item.raw or {}, cost=item.cost, mapping_status=result.mapping_status.get(request.keyword, "MAPPED")))
-    batch.returned_count=len(result.results); batch.mapped_count=len(result.results); batch.unmapped_count=result.unmapped_count; batch.status="COMPLETED"; batch.cost=0.0; db.commit()
+    batch.returned_count=len(result.results) - result.unmapped_count; batch.mapped_count=batch.returned_count; batch.unmapped_count=result.unmapped_count; batch.status="COMPLETED"; batch.cost=0.0; db.commit()
     output=[KeywordMetricResultOut(submitted_keyword=k, provider=v.provider, provider_keyword=v.provider_keyword or v.keyword, location_name=payload.target.location_name, location_target=payload.target.location_target, language_code=payload.target.language_code, country_code=payload.target.country_code, avg_monthly_searches=v.avg_monthly_searches, cpc=v.cpc, competition=v.competition, competition_index=v.competition_index, low_bid=v.low_bid, high_bid=v.high_bid, provider_currency_code=v.provider_currency_code, usd_cpc=v.usd_cpc, usd_low_bid=v.usd_low_bid, usd_high_bid=v.usd_high_bid, fx_rate=v.fx_rate, fx_rate_date=v.fx_rate_date, fx_source=v.fx_source, monthly_history=v.monthly_history, mapping_status=result.mapping_status.get(k,"MAPPED"), cost=v.cost) for k,v in result.results.items()]
-    return KeywordMetricsResearchResponse(batch_id=batch.id, status=batch.status, provider=provider.provider_name, submitted_count=len(requests), mapped_count=result.mapped_count if hasattr(result,'mapped_count') else len(result.results), unmapped_count=result.unmapped_count, provider_requests=result.provider_requests, results=output)
+    return KeywordMetricsResearchResponse(batch_id=batch.id, status=batch.status, provider=provider.provider_name, submitted_count=len(requests), mapped_count=len(result.results) - result.unmapped_count, unmapped_count=result.unmapped_count, provider_requests=result.provider_requests, results=output)
 
 
 @router.get("/keyword-metrics")
@@ -91,9 +116,9 @@ async def keyword_metrics_research_batch(payload: KeywordMetricsBatchRequest, db
         freshness_days=settings.keyword_metrics_freshness_days)
     locations = [StructuredLocation(x.city, x.state_code, x.country_code) for x in payload.locations]
     from app.providers.google_ads_keyword_metrics import language_resource
-    from app.services.currency_normalization import ExchangeRateApiProvider
-    fx_provider = ExchangeRateApiProvider(cache={})
-    report = await MultiCityKeywordMetricsOrchestrator(db, provider, resolver, fx_provider=fx_provider, customer_id=settings.google_ads_customer_id, provider_currency_code=settings.google_ads_currency_code, minimum_sv=payload.minimum_sv or 260, freshness_days=settings.keyword_metrics_freshness_days).run(payload.keywords, locations, batch=batch)
+    # FX transport is opt-in.  A missing PKR->USD rate must not silently
+    # trigger an external FX request during keyword research.
+    report = await MultiCityKeywordMetricsOrchestrator(db, provider, resolver, fx_provider=None, customer_id=settings.google_ads_customer_id, provider_currency_code=settings.google_ads_currency_code, minimum_sv=payload.minimum_sv or 260, freshness_days=settings.keyword_metrics_freshness_days).run(payload.keywords, locations, batch=batch)
     for row in report["results"]:
         evidence = db.get(KeywordMetricEvidence, row.get("evidence_id")) if row.get("evidence_id") else None
         if evidence:

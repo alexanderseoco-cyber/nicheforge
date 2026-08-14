@@ -1,35 +1,14 @@
-"use client";
-import React, {useState} from "react";
-import {formatUsd} from "../lib/formatCurrency";
+import Link from "next/link";
+import { AppShell } from "./components/AppShell";
 
-const API = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1";
-
-type TrendPoint = {year:number;month:number;searches:number};
-type Candidate = {id:string;keyword:string;city?:string;state?:string;population?:number;search_volume?:number;monthly_history?:TrendPoint[];usd_cpc?:number|null;usd_low_bid?:number|null;usd_high_bid?:number|null;low_da_count?:number;status:string;automatic_pass?:boolean;reason_codes:string[]};
-
-export default function Page(){
-  const [projectId,setProjectId]=useState("");
-  const [rows,setRows]=useState<Candidate[]>([]);
-  const [name,setName]=useState("Pest Control Research");
-  const [sv,setSv]=useState(300); const [da,setDa]=useState(10); const [need,setNeed]=useState(5);
-  async function create(){
-    const r=await fetch(`${API}/projects`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,profile:{min_population:20000,max_population:120000,min_search_volume:sv,da_threshold:da,required_low_da_count:need,organic_depth:10}})});
-    const j=await r.json(); setProjectId(j.id);
-  }
-  async function load(){ if(!projectId)return; const r=await fetch(`${API}/projects/${projectId}/candidates`); setRows(await r.json()); }
-  return <main style={{maxWidth:1400,margin:"0 auto",padding:24}}>
-    <h1>NicheForge</h1><p>Rank & Rent Niche Intelligence Engine</p>
-    <section style={{display:"flex",gap:12,flexWrap:"wrap",background:"white",padding:16,borderRadius:12}}>
-      <input value={name} onChange={e=>setName(e.target.value)} />
-      <label>Min SV <input type="number" value={sv} onChange={e=>setSv(+e.target.value)} style={{width:80}}/></label>
-      <label>DA &lt; <input type="number" value={da} onChange={e=>setDa(+e.target.value)} style={{width:60}}/></label>
-      <label>Weak sites required <input type="number" value={need} onChange={e=>setNeed(+e.target.value)} style={{width:60}}/></label>
-      <button onClick={create}>Create project</button><button onClick={load}>Refresh candidates</button>
-    </section>
-    <p>Project: {projectId || "not created"}</p>
-    <div style={{overflowX:"auto",background:"white",borderRadius:12}}><table style={{borderCollapse:"collapse",width:"100%"}}>
-      <thead><tr>{["Keyword","City","Pop","SV","12M Trend","CPC (USD)","Low bid (USD)","High bid (USD)","DA< threshold","Status","Reasons"].map(x=><th key={x} style={{textAlign:"left",padding:8,borderBottom:"1px solid #ddd"}}>{x}</th>)}</tr></thead>
-      <tbody>{rows.map(r=><tr key={r.id}><td>{r.keyword}</td><td>{r.city} {r.state}</td><td>{r.population}</td><td>{r.search_volume}</td><td><details><summary>{r.monthly_history?.length || 0} months</summary>{(r.monthly_history || []).map(p=><div key={`${p.year}-${p.month}`}>{p.year}-{String(p.month).padStart(2,"0")}: {p.searches}</div>)}</details></td><td>{formatUsd(r.usd_cpc)}</td><td>{formatUsd(r.usd_low_bid)}</td><td>{formatUsd(r.usd_high_bid)}</td><td>{r.low_da_count}</td><td>{r.status}</td><td>{r.reason_codes?.join(", ")}</td></tr>)}</tbody>
-    </table></div>
-  </main>;
+export default function Overview() {
+  return <AppShell active="Overview">
+    <div className="page-head"><div><p className="eyebrow">Workspace overview</p><h1>Overview</h1><p className="muted">Track search-demand research, validation progress, and evidence activity.</p></div><div className="head-actions"><Link className="button primary" href="/research/search-volume">New Search Volume Research</Link><Link className="button secondary" href="/rank-rent/validator">New Validation Run</Link></div></div>
+    <div className="metric-grid"><Metric title="Keywords Researched"/><Metric title="Cities Researched"/><Metric title="Valid Evidence"/><Metric title="Rank & Rent Eligible"/></div>
+    <div className="dashboard-grid"><section className="card"><div className="section-head"><div><h2>Recent Research</h2><p className="muted">Your latest search-volume activity will appear here.</p></div><Link className="text-link" href="/research/search-volume">Start research →</Link></div><Empty title="No search-volume research yet" body="Run a keyword across one or more locations to begin building evidence." href="/research/search-volume" label="Start Search Volume Research"/></section><section className="card"><div className="section-head"><div><h2>Rank & Rent Validation</h2><p className="muted">Move qualified evidence through your validation workflow.</p></div></div><div className="pipeline"><span>Candidates</span><i>→</i><span>Population</span><i>→</i><span>Search Volume</span><i>→</i><span>SERP / DA</span><i>→</i><span>Result</span></div><Empty title="No active validation run" body="Create a run when your research set is ready." href="/rank-rent/validator" label="Create Validation Run"/></section></div>
+    <section className="card provider-card"><div><h2>Data Sources</h2><p className="muted">Connection status is shown without exposing credentials.</p></div><div className="provider-list"><Status name="Google Ads"/><Status name="FX normalization"/><Status name="Authority providers"/></div></section>
+  </AppShell>
 }
+function Metric({title}:{title:string}) { return <div className="metric card"><span className="muted">{title}</span><strong>—</strong><small>No research yet</small></div> }
+function Status({name}:{name:string}) { return <div className="provider"><span>{name}</span><span className="badge neutral">Not checked</span></div> }
+function Empty({title,body,href,label}:{title:string;body:string;href:string;label:string}) { return <div className="empty"><div className="empty-mark">+</div><h3>{title}</h3><p className="muted">{body}</p><Link className="button secondary" href={href}>{label}</Link></div> }

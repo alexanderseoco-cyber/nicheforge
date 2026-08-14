@@ -92,6 +92,7 @@ class KeywordMetricsRequest(BaseModel):
     keywords: list[str] = Field(min_length=1)
     target: KeywordMetricTarget = Field(default_factory=KeywordMetricTarget)
     force_refresh: bool = False
+    provider: str = "google_ads"
 
 
 class KeywordMetricsBatchLocation(BaseModel):

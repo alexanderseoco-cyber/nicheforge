@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import uuid4
 
-from sqlalchemy import String, Integer, Float, DateTime, ForeignKey, JSON, Boolean, UniqueConstraint, Index
+from sqlalchemy import String, Integer, Float, DateTime, ForeignKey, JSON, Boolean, UniqueConstraint, Index, Numeric, Date
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -304,6 +304,23 @@ class ProviderGeoMapping(Base):
     __table_args__ = (UniqueConstraint("city", "state_code", "country_code", "provider", name="uq_provider_geo_identity"),)
 
 
+class ProviderCountryGeoMapping(Base):
+    """Validated provider-owned country target identity."""
+    __tablename__ = "provider_country_geo_mappings"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    country_code: Mapped[str] = mapped_column(String(2), index=True)
+    provider: Mapped[str] = mapped_column(String(80), index=True)
+    criterion_id: Mapped[str] = mapped_column(String(80))
+    resource_name: Mapped[str] = mapped_column(String(200))
+    provider_name: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    target_type: Mapped[str] = mapped_column(String(40))
+    provider_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    mapping_status: Mapped[str] = mapped_column(String(40), default="MAPPED")
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    provenance: Mapped[dict] = mapped_column(JSON, default=dict)
+    __table_args__ = (UniqueConstraint("country_code", "provider", name="uq_provider_country_geo_identity"),)
+
+
 class ProviderCustomerMetadata(Base):
     __tablename__ = "provider_customer_metadata"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
@@ -315,6 +332,22 @@ class ProviderCustomerMetadata(Base):
     fresh_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     provenance: Mapped[dict] = mapped_column(JSON, default=dict)
     __table_args__ = (UniqueConstraint("provider", "customer_id", name="uq_provider_customer_metadata"),)
+
+
+class FxRateEvidence(Base):
+    __tablename__ = "fx_rate_evidence"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    source_currency: Mapped[str] = mapped_column(String(3), index=True)
+    target_currency: Mapped[str] = mapped_column(String(3), index=True)
+    mode: Mapped[str] = mapped_column(String(16), default="latest")
+    requested_as_of_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
+    provider_effective_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
+    rate: Mapped[float] = mapped_column(Numeric(24, 12))
+    provider: Mapped[str] = mapped_column(String(100))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    fresh_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    provenance: Mapped[dict] = mapped_column(JSON, default=dict)
+    __table_args__ = (UniqueConstraint("source_currency", "target_currency", "mode", "requested_as_of_date", "provider", name="uq_fx_rate_identity"),)
 
 
 class KeywordMetricBatchItem(Base):
