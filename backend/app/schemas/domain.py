@@ -148,6 +148,7 @@ class KeywordMetricResultOut(BaseModel):
     fresh_until: str | None = None
     mapping_status: str
     cost: float | None = None
+    commercial_metrics: dict | None = None
 
 
 class KeywordMetricsResearchResponse(BaseModel):

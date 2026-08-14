@@ -350,6 +350,18 @@ class FxRateEvidence(Base):
     __table_args__ = (UniqueConstraint("source_currency", "target_currency", "mode", "requested_as_of_date", "provider", name="uq_fx_rate_identity"),)
 
 
+class KeywordOpportunityMetrics(Base):
+    __tablename__ = "keyword_opportunity_metrics"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    keyword_metric_evidence_id: Mapped[str] = mapped_column(ForeignKey("keyword_metric_evidence.id"), index=True)
+    commercial_search_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    projected_metrics: Mapped[dict] = mapped_column(JSON, default=dict)
+    ctr_model_version: Mapped[str] = mapped_column(String(40))
+    calculation_version: Mapped[str] = mapped_column(String(80))
+    calculated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("keyword_metric_evidence_id", "ctr_model_version", "calculation_version", name="uq_keyword_opportunity_calculation"),)
+
+
 class KeywordMetricBatchItem(Base):
     """Stable per-keyword/location state used for resumable batch execution."""
     __tablename__ = "keyword_metric_batch_items"

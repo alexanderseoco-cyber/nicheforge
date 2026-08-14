@@ -18,13 +18,16 @@ from app.services.recalculation import preview_recalculation, recalculate, ledge
 from app.services.imports import export_candidate_history_csv, export_project_csv, export_run_csv, import_cities, import_keyword_export, import_manual_evidence, import_manual_moz_csv, import_moz, import_niches
 from app.providers.factory import keyword_metrics_provider
 from app.providers.contracts import KeywordMetricRequest
-from app.models.entities import KeywordMetricQuery, KeywordMetricEvidence, KeywordMetricBatch, KeywordMetricValidationHandoff, ProviderCountryGeoMapping
+from app.models.entities import KeywordMetricQuery, KeywordMetricEvidence, KeywordMetricBatch, KeywordMetricValidationHandoff, ProviderCountryGeoMapping, KeywordOpportunityMetrics
 from app.services.keyword_metrics_batch import KeywordMetricsBatchOrchestrator
 from app.services.keyword_metrics_multi_city import MultiCityKeywordMetricsOrchestrator, StructuredLocation
 from app.providers.google_ads_geo import GoogleAdsGeoTargetResolver
 from app.core.config import get_settings
 from app.providers.keyword_metrics_safety import KeywordMetricsGuardError
 from app.services.currency_normalization import normalize_to_usd
+from app.services.customer_currency import resolve_cached_customer_currency
+from app.services.monetary_enrichment import resolve_usd_metrics
+from app.services.derived_metrics import calculate_derived_metrics
 
 router = APIRouter(prefix="/api/v1")
 
@@ -69,17 +72,29 @@ async def keyword_metrics_research(payload: KeywordMetricsRequest, db: Session =
         if item and result.mapping_status.get(request.keyword) != "UNMAPPED":
             # Never infer currency from the target country or a USD default.
             # Unknown currency keeps provider amounts, while USD fields remain null.
-            currency = item.provider_currency_code
+            settings = get_settings()
+            currency_resolution = resolve_cached_customer_currency(db, provider=item.provider, customer_id=settings.google_ads_customer_id, override=item.provider_currency_code)
+            currency = currency_resolution.currency_code
             item.provider_currency_code = currency
-            item.usd_cpc, cpc_rate = normalize_to_usd(item.cpc, currency, rate=None)
-            item.usd_low_bid, low_rate = normalize_to_usd(item.low_bid, currency, rate=None)
-            item.usd_high_bid, high_rate = normalize_to_usd(item.high_bid, currency, rate=None)
-            rate = cpc_rate or low_rate or high_rate
-            if rate:
-                item.fx_rate, item.fx_rate_date, item.fx_source = rate.rate, rate.rate_date, rate.source
+            usd = resolve_usd_metrics(db, provider_currency=currency, cpc=item.cpc, low_bid=item.low_bid, high_bid=item.high_bid, customer_id=settings.google_ads_customer_id)
+            item.usd_cpc, item.usd_low_bid, item.usd_high_bid = usd.usd_cpc, usd.usd_low_bid, usd.usd_high_bid
+            item.fx_rate, item.fx_rate_date, item.fx_source = usd.fx_rate, usd.fx_rate_date, usd.fx_source
             db.add(KeywordMetricEvidence(query_id=query.id, submitted_keyword=request.keyword, provider_keyword=item.provider_keyword or item.keyword, normalized_keyword=request.keyword.strip().casefold(), location_name=request.location_name, location_target=request.location_target or {}, language_code=request.language_code, country_code=request.country_code, provider=item.provider, source_kind=item.provider, avg_monthly_searches=item.avg_monthly_searches, competition=item.competition, competition_index=item.competition_index, cpc=item.cpc, low_bid=item.low_bid, high_bid=item.high_bid, provider_currency_code=item.provider_currency_code, usd_cpc=item.usd_cpc, usd_low_bid=item.usd_low_bid, usd_high_bid=item.usd_high_bid, fx_rate=item.fx_rate, fx_rate_date=item.fx_rate_date, fx_source=item.fx_source, monthly_history=item.monthly_history, raw_payload=item.raw or {}, cost=item.cost, mapping_status=result.mapping_status.get(request.keyword, "MAPPED")))
     batch.returned_count=len(result.results) - result.unmapped_count; batch.mapped_count=batch.returned_count; batch.unmapped_count=result.unmapped_count; batch.status="COMPLETED"; batch.cost=0.0; db.commit()
-    output=[KeywordMetricResultOut(submitted_keyword=k, provider=v.provider, provider_keyword=v.provider_keyword or v.keyword, location_name=payload.target.location_name, location_target=payload.target.location_target, language_code=payload.target.language_code, country_code=payload.target.country_code, avg_monthly_searches=v.avg_monthly_searches, cpc=v.cpc, competition=v.competition, competition_index=v.competition_index, low_bid=v.low_bid, high_bid=v.high_bid, provider_currency_code=v.provider_currency_code, usd_cpc=v.usd_cpc, usd_low_bid=v.usd_low_bid, usd_high_bid=v.usd_high_bid, fx_rate=v.fx_rate, fx_rate_date=v.fx_rate_date, fx_source=v.fx_source, monthly_history=v.monthly_history, mapping_status=result.mapping_status.get(k,"MAPPED"), cost=v.cost) for k,v in result.results.items()]
+    output=[]
+    for k, v in result.results.items():
+        derived = None
+        if result.mapping_status.get(k) != "UNMAPPED":
+            derived = calculate_derived_metrics(v.avg_monthly_searches, v.usd_cpc)
+            evidence = db.query(KeywordMetricEvidence).filter_by(submitted_keyword=k, provider=v.provider).order_by(KeywordMetricEvidence.fetched_at.desc()).first()
+            if evidence:
+                stored = db.query(KeywordOpportunityMetrics).filter_by(keyword_metric_evidence_id=evidence.id, calculation_version=derived.calculation_version, ctr_model_version=derived.ctr_model_version).first()
+                if stored is None:
+                    stored = KeywordOpportunityMetrics(keyword_metric_evidence_id=evidence.id, commercial_search_value=derived.commercial_search_value, projected_metrics=derived.projected, ctr_model_version=derived.ctr_model_version, calculation_version=derived.calculation_version)
+                    db.add(stored); db.flush()
+                derived = type("StoredDerived", (), {"commercial_search_value": stored.commercial_search_value, "ctr_model_version": stored.ctr_model_version, "projected": stored.projected_metrics})()
+        output.append(KeywordMetricResultOut(submitted_keyword=k, provider=v.provider, provider_keyword=v.provider_keyword or v.keyword, location_name=payload.target.location_name, location_target=payload.target.location_target, language_code=payload.target.language_code, country_code=payload.target.country_code, avg_monthly_searches=v.avg_monthly_searches, cpc=v.cpc, competition=v.competition, competition_index=v.competition_index, low_bid=v.low_bid, high_bid=v.high_bid, provider_currency_code=v.provider_currency_code, usd_cpc=v.usd_cpc, usd_low_bid=v.usd_low_bid, usd_high_bid=v.usd_high_bid, fx_rate=v.fx_rate, fx_rate_date=v.fx_rate_date, fx_source=v.fx_source, monthly_history=v.monthly_history, mapping_status=result.mapping_status.get(k,"MAPPED"), cost=v.cost, commercial_metrics=None if derived is None else {"commercial_search_value": derived.commercial_search_value, "ctr_model_version": derived.ctr_model_version, "projected": derived.projected}))
+    db.commit()
     return KeywordMetricsResearchResponse(batch_id=batch.id, status=batch.status, provider=provider.provider_name, submitted_count=len(requests), mapped_count=len(result.results) - result.unmapped_count, unmapped_count=result.unmapped_count, provider_requests=result.provider_requests, results=output)
 
 

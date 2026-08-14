@@ -21,7 +21,7 @@ def _client(monkeypatch, provider="mock"):
     Base.metadata.create_all(engine)
     db = Session(engine)
     app.dependency_overrides[get_db] = lambda: db
-    settings = SimpleNamespace(keyword_metrics_provider=provider, google_ads_enabled=False, google_ads_live_approved=False)
+    settings = SimpleNamespace(keyword_metrics_provider=provider, google_ads_enabled=False, google_ads_live_approved=False, google_ads_customer_id=None, google_ads_currency_code=None)
     monkeypatch.setattr(routes, "get_settings", lambda: settings, raising=False)
     monkeypatch.setattr("app.providers.factory.get_settings", lambda: settings)
     return TestClient(app, raise_server_exceptions=False), db
@@ -29,7 +29,7 @@ def _client(monkeypatch, provider="mock"):
 
 def test_preview_is_non_transporting(monkeypatch):
     client, db = _client(monkeypatch)
-    response = client.post("/api/v1/keyword-metrics/preview", json={"keywords": ["term", "term"]})
+    response = client.post("/api/v1/keyword-metrics/preview", json={"keywords": ["term", "term"], "provider": "mock", "target": {"location_name": "United States", "country_code": "US"}})
     assert response.status_code == 200
     assert response.json()["transport_would_occur"] is False
     app.dependency_overrides.clear(); db.close()
@@ -37,7 +37,7 @@ def test_preview_is_non_transporting(monkeypatch):
 
 def test_research_with_mock_provider(monkeypatch):
     client, db = _client(monkeypatch)
-    response = client.post("/api/v1/keyword-metrics/research", json={"keywords": ["term"]})
+    response = client.post("/api/v1/keyword-metrics/research", json={"keywords": ["term"], "provider": "mock", "target": {"location_name": "United States", "country_code": "US"}})
     assert response.status_code == 200
     assert response.json()["mapped_count"] == 1
     app.dependency_overrides.clear(); db.close()
@@ -45,14 +45,14 @@ def test_research_with_mock_provider(monkeypatch):
 
 def test_unknown_provider_is_rejected(monkeypatch):
     client, db = _client(monkeypatch, "not-a-provider")
-    response = client.post("/api/v1/keyword-metrics/preview", json={"keywords": ["term"]})
+    response = client.post("/api/v1/keyword-metrics/preview", json={"keywords": ["term"], "provider": "not-a-provider", "target": {"location_name": "United States", "country_code": "US"}})
     assert response.status_code == 500
     app.dependency_overrides.clear(); db.close()
 
 
 def test_unmapped_response_is_serialized(monkeypatch):
     client, db = _client(monkeypatch, "imported")
-    response = client.post("/api/v1/keyword-metrics/research", json={"keywords": ["term"]})
+    response = client.post("/api/v1/keyword-metrics/research", json={"keywords": ["term"], "provider": "imported", "target": {"location_name": "United States", "country_code": "US"}})
     assert response.status_code == 200
     assert response.json()["unmapped_count"] == 1
     app.dependency_overrides.clear(); db.close()

@@ -10,6 +10,7 @@ from app.providers.contracts import KeywordMetricRequest
 from app.services.keyword_metrics_batch import KeywordMetricsBatchOrchestrator
 from app.services.currency_normalization import normalize_to_usd
 from app.services.customer_currency import resolve_cached_customer_currency
+from app.services.monetary_enrichment import resolve_usd_metrics
 
 
 class SystemicProviderFailure(BaseException):
@@ -152,10 +153,9 @@ class MultiCityKeywordMetricsOrchestrator:
                         report["fx_live_requests"] = min(calls, 1); report["fx_cache_hits"] = int(calls == 0)
                     except Exception:
                         report["fx_failures"] += 1
-                for source, target in ((result.cpc, "usd_cpc"), (result.low_bid, "usd_low_bid"), (result.high_bid, "usd_high_bid")):
-                    value, rate = normalize_to_usd(source, result.provider_currency_code, rate=fx_rate)
-                    setattr(result, target, value)
-                    if rate: result.fx_rate, result.fx_rate_date, result.fx_source = rate.rate, rate.rate_date, rate.source
+                usd = resolve_usd_metrics(self.db, provider_currency=result.provider_currency_code, cpc=result.cpc, low_bid=result.low_bid, high_bid=result.high_bid, customer_id=self.customer_id, fx_rate=fx_rate)
+                result.usd_cpc, result.usd_low_bid, result.usd_high_bid = usd.usd_cpc, usd.usd_low_bid, usd.usd_high_bid
+                result.fx_rate, result.fx_rate_date, result.fx_source = usd.fx_rate, usd.fx_rate_date, usd.fx_source
                 evidence = KeywordMetricEvidence(query_id=query.id, submitted_keyword=request.keyword, provider_keyword=result.provider_keyword or result.keyword, normalized_keyword=request.keyword.casefold(), location_name=request.location_name, location_target=request.location_target or {}, language_code="en", country_code=request.country_code, provider=result.provider, source_kind=result.provider, avg_monthly_searches=result.avg_monthly_searches, competition=result.competition, competition_index=result.competition_index, cpc=result.cpc, low_bid=result.low_bid, high_bid=result.high_bid, provider_currency_code=result.provider_currency_code, usd_cpc=result.usd_cpc, usd_low_bid=result.usd_low_bid, usd_high_bid=result.usd_high_bid, fx_rate=result.fx_rate, fx_rate_date=result.fx_rate_date, fx_source=result.fx_source, monthly_history=result.monthly_history, raw_payload=result.raw or {}, fetched_at=datetime.utcnow(), fresh_until=datetime.utcnow() + self.freshness, cost=result.cost, mapping_status="MAPPED")
                 self.db.add(evidence); self.db.flush(); item.status, item.evidence_id = "MAPPED", evidence.id; item.policy_minimum_sv = self.minimum_sv; item.policy_status = "MISSING_EVIDENCE" if result.avg_monthly_searches is None else ("ELIGIBLE_FOR_RANK_RENT_PIPELINE" if result.avg_monthly_searches >= self.minimum_sv else "BELOW_SV_THRESHOLD"); item.policy_snapshot = {"minimum_sv": self.minimum_sv}; item.evaluated_at = datetime.utcnow(); report["historical_successes"] += 1
                 report["results"].append({"item_id": item.id, "evidence_id": evidence.id, "city": item.city, "keyword": item.keyword, "status": item.status, "search_volume": result.avg_monthly_searches, "trend_status": "COMPLETE_12M" if len(result.monthly_history or []) == 12 else ("PARTIAL" if result.monthly_history else "MISSING")})
