@@ -537,6 +537,40 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Compilation was attempted but Python could not replace two locked project `__pycache__` files; no source compilation error was reported.
 - No live Google Ads, DataForSEO, Moz, Ahrefs, or SV provider requests were made.
 
+### Authentication/User Identity Foundation — implementation started
+
+- Audit confirmed no existing user/authentication model or security dependency.
+- Added durable `User` and hashed-refresh `UserSession` models plus migration
+  `c12authidentity` after `c11providercalltelemetry`.
+- Added local PBKDF2-HMAC password hashing, configurable short-lived access
+  tokens, hashed rotating refresh sessions, server-side revocation checks, and
+  local auth/admin endpoints.
+- Added safe idempotent admin bootstrap command: `python -m app.cli`; existing
+  email exits without modifying credentials or role.
+- Added immutable user IDs, normalized unique emails, ADMIN/USER roles,
+  ACTIVE/DISABLED status, and protection against disabling/demoting the last
+  active administrator.
+- Search Volume routes remain staged rather than forcibly broken; auth/admin
+  management is implemented and provider telemetry remains for admin-only
+  route integration review.
+- Authentication tests: 4 passed. Provider/network requests: 0. No commit.
+
+### Authentication/User Identity Foundation — implementation complete pending review
+
+- Added frontend login and session-aware API client using short-lived access
+  tokens in `sessionStorage`; refresh tokens are not placed in ordinary
+  browser `localStorage`.
+- Added separate in-process authentication attempt limiter.
+- Protected provider telemetry as ADMIN-only. Search Volume execution remains
+  staged for authenticated rollout after frontend integration rather than
+  breaking existing anonymous local workflows.
+- Added isolated Alembic upgrade regression for `c12authidentity`.
+- Full focused auth/provider regression: 33 tests passed; frontend TypeScript
+  passed with `--incremental false`; AST and diff checks pass; provider/network
+  requests remain 0.
+- No commit made. Per-user quotas, bonuses, reservations, billing, and
+  extension implementation remain future scope.
+
 ### Google Ads operational safety layer — Phase 3 actual-attempt telemetry
 
 - Added additive `ProviderCall` telemetry for each keyword-metrics provider chunk at the existing multi-city transport boundary.
@@ -563,6 +597,17 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Phase 3 next review point: full focused regression, then decide whether operational safety layer is ready for a checkpoint commit.
 - Hardening review completed: operation capacity now uses a rolling 24-hour window rather than calendar-day buckets. Production-enabled Google transport also requires an enabled customer limiter before client transport can proceed.
 - Rolling-window and production-limiter guard tests pass; no provider requests made and no commit created.
+
+### Authentication/User Identity Foundation — approved and documented
+
+- Added `Authentication User Identity Foundation.md` with the approved scope,
+  including configurable access/session lifetimes, refresh rotation and
+  revocation, immutable user IDs, idempotent admin bootstrap, last-admin
+  protection, staged route protection, and separate web/extension storage
+  expectations.
+- Implementation has not yet changed application code. Authentication,
+  quotas, and user/provider reservations remain separate phases.
+- Provider/network requests remain 0. No commit made for this phase.
 
 ### Search Volume UI / Commercial Insights update — current
 

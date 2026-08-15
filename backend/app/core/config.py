@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     keyword_metrics_requests_per_second: float = 1.0
     keyword_metrics_rate_limit_enabled: bool = False
     google_ads_daily_operation_budget: int | None = None
+    auth_secret: str | None = None
+    auth_access_token_lifetime_seconds: int = 900
+    auth_refresh_token_lifetime_seconds: int = 2_592_000
     keyword_metrics_budget: float | None = None
     keyword_metrics_freshness_days: int = 30
 

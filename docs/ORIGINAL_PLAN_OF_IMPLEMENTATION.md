@@ -167,6 +167,15 @@ and telemetry API tests pass with zero external requests. The next step is a
 full focused regression and checkpoint review for the operational safety
 layer.
 
+The next approved milestone is documented in `Authentication User Identity
+Foundation.md`. It adds only durable local user identity and authentication
+above the committed provider-safety layer. Access-token and refresh-session
+lifetimes are configurable; refresh tokens are hashed, rotated, and checked
+for revocation server-side. Roles remain `ADMIN`/`USER`, user IDs remain the
+future quota key, and the last active administrator is protected. Per-user
+quotas, bonuses, reservations, billing, and provider allocation remain out of
+scope. Implementation must remain zero-network and uncommitted until review.
+
 Final Phase 3 hardening uses a rolling 24-hour provider-operation window, not
 calendar-day accounting. In addition, production-enabled Google transport is
 blocked unless the configured customer rate limiter is enabled. This prevents
@@ -191,3 +200,21 @@ different customers. Deterministic tests verify same-customer spacing,
 customer isolation, and disabled zero-wait behavior. No provider requests were
 made. The next safeguard is the configurable operation-budget guard; quota
 must count actual attempts rather than planned keyword combinations.
+
+Authentication implementation has started after the provider-safety commit.
+The audit found no existing identity framework, so the foundation reuses the
+current FastAPI/SQLAlchemy conventions with local PBKDF2-HMAC password
+hashing, configurable short-lived signed access tokens, and hashed rotating
+refresh sessions. Migration `c12authidentity` follows
+`c11providercalltelemetry`. Initial local tests cover login, refresh
+rotation/revocation, disabled-user rejection, and last-active-admin safety.
+Search Volume routes remain staged during frontend integration rather than
+being silently broken. No provider calls are authorized in this phase.
+
+The remaining foundation work is complete pending review: frontend login and
+session-aware API client, separate authentication-attempt limiting, ADMIN-only
+provider telemetry, and isolated `c12authidentity` migration validation are
+implemented. Search Volume execution remains staged for authenticated rollout
+after frontend integration so existing local anonymous workflows are not
+silently broken. Focused authentication/provider tests pass with zero network
+requests; per-user quotas and reservations remain a future phase.

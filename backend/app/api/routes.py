@@ -29,6 +29,7 @@ from app.services.currency_normalization import normalize_to_usd
 from app.services.customer_currency import resolve_cached_customer_currency
 from app.services.monetary_enrichment import resolve_usd_metrics
 from app.services.derived_metrics import calculate_derived_metrics
+from app.api.auth_routes import require_admin
 
 router = APIRouter(prefix="/api/v1")
 
@@ -84,7 +85,7 @@ async def keyword_metrics_preview(payload: KeywordMetricsRequest, db: Session = 
 
 
 @router.get("/keyword-metrics/provider-telemetry")
-def keyword_metrics_provider_telemetry(db: Session = Depends(get_db)):
+def keyword_metrics_provider_telemetry(_: object = Depends(require_admin), db: Session = Depends(get_db)):
     rows = db.query(ProviderCall).filter(ProviderCall.stage == "keyword_metrics").all()
     return {
         "provider": "google_ads",

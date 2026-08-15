@@ -198,3 +198,23 @@ Implementation must begin with an architecture audit and proceed with zero
 external provider requests. User configured quotas remain separate from the
 currently available provider capacity; executable allowance is the minimum of
 the two. No live access-level or quota inference is permitted.
+
+## Authentication/User Identity Foundation — implementation status
+
+The authentication milestone is documented in
+`Authentication User Identity Foundation.md` and is being implemented above
+the committed provider-safety layer. It adds durable users, roles, status,
+configurable access/session lifetimes, rotating hashed refresh sessions, local
+admin bootstrap, and staged authorization. Quotas and reservations remain a
+future phase. Search Volume route protection is staged until frontend login
+integration is complete; provider telemetry is intended to become admin-only.
+
+## Authentication/User Identity Foundation — approved next phase
+
+The provider-side safety checkpoint is committed as `d2ae13c`. The next phase
+is documented in `Authentication User Identity Foundation.md`. It establishes
+durable `user_id`, local authentication, roles, active/disabled status,
+configurable short-lived access tokens, hashed rotating refresh sessions,
+admin bootstrap and management, and staged route protection. It explicitly
+does not add quotas, bonuses, billing, or provider reservations. All provider
+traffic remains disabled during implementation.

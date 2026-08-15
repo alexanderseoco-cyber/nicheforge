@@ -9,8 +9,10 @@ from app.db.base import Base
 from app.db.session import get_db
 from fastapi import FastAPI
 from app.api.routes import router
-from app.models.entities import KeywordMetricEvidence, ProviderCall
+from app.models.entities import KeywordMetricEvidence, ProviderCall, User
+from app.services.auth import hash_password, issue_access_token
 from app.api import routes
+from app.api import auth_routes
 
 app = FastAPI()
 app.include_router(router)
@@ -21,8 +23,9 @@ def _client(monkeypatch, provider="mock"):
     Base.metadata.create_all(engine)
     db = Session(engine)
     app.dependency_overrides[get_db] = lambda: db
-    settings = SimpleNamespace(keyword_metrics_provider=provider, google_ads_enabled=False, google_ads_live_approved=False, google_ads_customer_id=None, google_ads_currency_code=None)
+    settings = SimpleNamespace(keyword_metrics_provider=provider, google_ads_enabled=False, google_ads_live_approved=False, google_ads_customer_id=None, google_ads_currency_code=None, auth_secret="test-secret", auth_access_token_lifetime_seconds=900, auth_refresh_token_lifetime_seconds=3600)
     monkeypatch.setattr(routes, "get_settings", lambda: settings, raising=False)
+    monkeypatch.setattr(auth_routes, "get_settings", lambda: settings, raising=False)
     monkeypatch.setattr("app.providers.factory.get_settings", lambda: settings)
     return TestClient(app, raise_server_exceptions=False), db
 
@@ -74,7 +77,10 @@ def test_get_evidence_retrieval(monkeypatch):
 
 def test_provider_telemetry_summary_is_local_only(monkeypatch):
     client, db = _client(monkeypatch)
-    response = client.get("/api/v1/keyword-metrics/provider-telemetry")
+    admin = User(email="admin@example.com", password_hash=hash_password("a sufficiently strong password"), role="ADMIN", status="ACTIVE")
+    db.add(admin); db.commit()
+    token = issue_access_token(admin.id, admin.role, "test-secret", 900)
+    response = client.get("/api/v1/keyword-metrics/provider-telemetry", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     assert response.json()["actual_attempts"] == 0
     assert response.json()["consumed_operations"] == 0
