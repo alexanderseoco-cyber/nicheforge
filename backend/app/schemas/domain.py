@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -182,3 +183,23 @@ class KeywordMetricsHandoffResponse(BaseModel):
     evidence_ids: list[str]
     selected_count: int
     provider_requests: int = 0
+    new_count: int = 0
+    existing_count: int = 0
+    existing_evidence_ids: list[str] = Field(default_factory=list)
+    new_handoff_ids: list[str] = Field(default_factory=list)
+    existing_handoff_ids: list[str] = Field(default_factory=list)
+    all_handoff_ids: list[str] = Field(default_factory=list)
+
+class KeywordMetricsHandoffOut(BaseModel):
+    handoff_id: str
+    evidence_id: str
+    keyword: str
+    search_volume: int | None
+    country_code: str
+    location_target: dict
+    language_code: str
+    provider: str
+    provider_keyword: str | None = None
+    validation_profile: dict
+    created_at: datetime
+    status: str

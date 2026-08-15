@@ -929,3 +929,21 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Validation: TypeScript passed; focused backend tests 15 passed; `git diff --check` passed; provider/network requests 0.
 - Browser review still requires manual desktop/tablet/mobile inspection. Production build remains environment-stall/inconclusive. No commit or push was made.
 - Final browser follow-up tightened compact month-label spacing and made the Commercial Insights table fixed-layout/wrapping so headings cannot collide. Existing Export CSV remains visible in the results toolbar; full derived-statistics export scope still requires final CSV inspection.
+
+### Search Volume → Rank & Rent validator handoff discovery — implemented, UI-4C deferred
+
+- Added zero-network handoff retrieval endpoints: `GET /api/v1/rank-rent/handoffs` and `GET /api/v1/rank-rent/handoffs/{handoff_id}`.
+- Validator now loads pending handoffs, displays imported keyword/SV/provider/evidence context, supports selecting among multiple handoffs, and keeps validation explicitly manual.
+- Existing handoff ledger and immutable evidence IDs are reused; no parallel candidate model was created. The Candidates page remains deferred because it is still a placeholder.
+- Validation: handoff/API tests 9 passed; frontend TypeScript passed; `git diff --check` passed; provider requests 0.
+- Search Volume CTA currently opens the validator route; exact handoff query-context wiring remains a small follow-up because the existing CTA state only exposes aggregate handoff counts.
+
+### Search Volume → R&R exact handoff IDs — API contract complete, CTA follow-up pending
+
+- Handoff responses now include `new_handoff_ids`, `existing_handoff_ids`, and `all_handoff_ids` while preserving existing counts and evidence IDs.
+- Validator accepts both `handoff_id` and legacy `handoff` query parameters and resolves the exact persisted handoff without provider activity.
+- Frontend stores returned handoff IDs locally for the next context-navigation wiring step; the current CTA still opens the generic Validator route.
+- Validation: handoff test passed; frontend TypeScript passed; `git diff --check` passed; provider requests 0.
+- Exact-context wiring now derives the visible CTA URL from `all_handoff_ids`: one ID routes to `?handoff_id=...`, while zero or multiple IDs use the generic Validator route.
+- Corrected Search Volume loading/search placeholder mojibake to plain readable text (`Researching...`, `Search keyword...`) without changing request behavior.
+- Performed a source-wide frontend/backend marker scan; no remaining `Ã`, `Â`, `â`, or replacement-character mojibake markers were found. Browser may require a hard refresh to discard the prior dev bundle.

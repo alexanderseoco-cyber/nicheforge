@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
@@ -6,7 +7,7 @@ from datetime import datetime
 
 from app.db.session import get_db
 from app.models.entities import ImportBatch, Project, City, Candidate, Run, RunCandidate
-from app.schemas.domain import (ProjectCreate, CandidateGenerateRequest, CandidateOut, RunRequest, RunCreate, RunOut, ValidationProfile, OverlayRequest, KeywordMetricsRequest, KeywordMetricsPreview, KeywordMetricsResearchResponse, KeywordMetricResultOut, KeywordMetricsHandoffRequest, KeywordMetricsHandoffResponse, KeywordMetricsBatchRequest)
+from app.schemas.domain import (ProjectCreate, CandidateGenerateRequest, CandidateOut, RunRequest, RunCreate, RunOut, ValidationProfile, OverlayRequest, KeywordMetricsRequest, KeywordMetricsPreview, KeywordMetricsResearchResponse, KeywordMetricResultOut, KeywordMetricsHandoffRequest, KeywordMetricsHandoffResponse, KeywordMetricsBatchRequest, KeywordMetricsHandoffOut)
 from app.services.normalization import normalize_keyword, build_keyword
 from app.services.gates import population_gate
 from app.services.pipeline import process_candidate
@@ -35,6 +36,12 @@ from app.services.derived_metrics import calculate_derived_metrics
 from app.api.auth_routes import require_admin
 
 router = APIRouter(prefix="/api/v1")
+logger = logging.getLogger(__name__)
+
+@router.get("/app/capabilities")
+def app_capabilities():
+    settings = get_settings()
+    return {"single_user_mode": bool(settings.nicheforge_single_user_mode)}
 
 @router.get("/geo/countries")
 def country_geo_capabilities(db: Session = Depends(get_db)):
@@ -124,6 +131,7 @@ async def keyword_metrics_research(payload: KeywordMetricsRequest, user: User = 
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         if reservation: finish(db, reservation, 0)
+        logger.exception("Keyword metrics research failed before response serialization")
         # Keep provider/runtime failures JSON-shaped so browser clients receive
         # a readable API error instead of a CORS-looking network failure.
         safe_type = type(exc).__name__
@@ -131,6 +139,7 @@ async def keyword_metrics_research(payload: KeywordMetricsRequest, user: User = 
     for request in requests:
         query = KeywordMetricQuery(submitted_keyword=request.keyword, normalized_keyword=request.keyword.strip().casefold(), location_name=request.location_name, location_target=request.location_target or {}, language_code=request.language_code, country_code=request.country_code, provider=provider.provider_name, status=result.mapping_status.get(request.keyword, "UNMAPPED"))
         db.add(query); db.flush(); item=result.results.get(request.keyword)
+        evidence = None
         if item and result.mapping_status.get(request.keyword) != "UNMAPPED":
             # Never infer currency from the target country or a USD default.
             # Unknown currency keeps provider amounts, while USD fields remain null.
@@ -158,7 +167,8 @@ async def keyword_metrics_research(payload: KeywordMetricsRequest, user: User = 
                     stored = KeywordOpportunityMetrics(keyword_metric_evidence_id=evidence.id, commercial_search_value=derived.commercial_search_value, projected_metrics=derived.projected, ctr_model_version=derived.ctr_model_version, calculation_version=derived.calculation_version)
                     db.add(stored); db.flush()
                 derived = type("StoredDerived", (), {"commercial_search_value": stored.commercial_search_value, "ctr_model_version": stored.ctr_model_version, "projected": stored.projected_metrics})()
-        output.append(KeywordMetricResultOut(submitted_keyword=k, provider=v.provider, provider_keyword=v.provider_keyword or v.keyword, location_name=payload.target.location_name, location_target=payload.target.location_target, language_code=payload.target.language_code, country_code=payload.target.country_code, avg_monthly_searches=v.avg_monthly_searches, cpc=v.cpc, competition=v.competition, competition_index=v.competition_index, low_bid=v.low_bid, high_bid=v.high_bid, provider_currency_code=v.provider_currency_code, usd_cpc=v.usd_cpc, usd_low_bid=v.usd_low_bid, usd_high_bid=v.usd_high_bid, fx_rate=v.fx_rate, fx_rate_date=v.fx_rate_date, fx_source=v.fx_source, monthly_history=v.monthly_history, mapping_status=result.mapping_status.get(k,"MAPPED"), cost=v.cost, commercial_metrics=None if derived is None else {"commercial_search_value": derived.commercial_search_value, "ctr_model_version": derived.ctr_model_version, "projected": derived.projected}))
+        evidence_id = evidence.id if result.mapping_status.get(k) != "UNMAPPED" and evidence else None
+        output.append(KeywordMetricResultOut(id=evidence_id, submitted_keyword=k, provider=v.provider, provider_keyword=v.provider_keyword or v.keyword, location_name=payload.target.location_name, location_target=payload.target.location_target, language_code=payload.target.language_code, country_code=payload.target.country_code, avg_monthly_searches=v.avg_monthly_searches, cpc=v.cpc, competition=v.competition, competition_index=v.competition_index, low_bid=v.low_bid, high_bid=v.high_bid, provider_currency_code=v.provider_currency_code, usd_cpc=v.usd_cpc, usd_low_bid=v.usd_low_bid, usd_high_bid=v.usd_high_bid, fx_rate=v.fx_rate, fx_rate_date=v.fx_rate_date, fx_source=v.fx_source, monthly_history=v.monthly_history, mapping_status=result.mapping_status.get(k,"MAPPED"), cost=v.cost, commercial_metrics=None if derived is None else {"commercial_search_value": derived.commercial_search_value, "ctr_model_version": derived.ctr_model_version, "projected": derived.projected}))
     db.commit()
     return KeywordMetricsResearchResponse(batch_id=batch.id, status=batch.status, provider=provider.provider_name, submitted_count=len(requests), mapped_count=len(result.results) - result.unmapped_count, unmapped_count=result.unmapped_count, provider_requests=result.provider_requests, results=output)
 
@@ -218,14 +228,36 @@ async def keyword_metrics_research_batch(payload: KeywordMetricsBatchRequest, us
 
 @router.post("/keyword-metrics/send-to-validation", response_model=KeywordMetricsHandoffResponse)
 def keyword_metrics_handoff(payload: KeywordMetricsHandoffRequest, db: Session = Depends(get_db)):
-    handoffs=[]
+    handoffs=[]; existing_ids=[]; new_ids=[]; existing_handoff_ids=[]; new_handoff_ids=[]
     for evidence_id in dict.fromkeys(payload.evidence_ids):
         evidence=db.get(KeywordMetricEvidence, evidence_id)
         if not evidence: raise HTTPException(404, f"Keyword metric evidence not found: {evidence_id}")
+        existing = db.query(KeywordMetricValidationHandoff).filter_by(evidence_id=evidence.id).order_by(KeywordMetricValidationHandoff.created_at.asc()).first()
+        if existing:
+            existing_ids.append(evidence.id)
+            existing_handoff_ids.append(existing.id)
+            handoffs.append(existing)
+            continue
         handoff=KeywordMetricValidationHandoff(evidence_id=evidence.id, submitted_keyword=evidence.submitted_keyword, provider=evidence.provider, provider_keyword=evidence.provider_keyword, location_target=evidence.location_target, language_code=evidence.language_code, country_code=evidence.country_code, validation_profile_snapshot=payload.validation_profile.model_dump())
-        db.add(handoff); db.flush(); handoffs.append(handoff)
+        db.add(handoff); db.flush(); handoffs.append(handoff); new_ids.append(evidence.id)
+        new_handoff_ids.append(handoff.id)
     db.commit()
-    return KeywordMetricsHandoffResponse(handoff_ids=[x.id for x in handoffs], evidence_ids=[x.evidence_id for x in handoffs], selected_count=len(handoffs), provider_requests=0)
+    return KeywordMetricsHandoffResponse(handoff_ids=[x.id for x in handoffs], evidence_ids=[x.evidence_id for x in handoffs], selected_count=len(handoffs), provider_requests=0, new_count=len(new_ids), existing_count=len(existing_ids), existing_evidence_ids=existing_ids, new_handoff_ids=new_handoff_ids, existing_handoff_ids=existing_handoff_ids, all_handoff_ids=[x.id for x in handoffs])
+
+@router.get("/rank-rent/handoffs", response_model=list[KeywordMetricsHandoffOut])
+def list_rank_rent_handoffs(db: Session = Depends(get_db)):
+    rows = db.query(KeywordMetricValidationHandoff).order_by(KeywordMetricValidationHandoff.created_at.desc()).all()
+    return [_handoff_out(row, db) for row in rows]
+
+@router.get("/rank-rent/handoffs/{handoff_id}", response_model=KeywordMetricsHandoffOut)
+def get_rank_rent_handoff(handoff_id: str, db: Session = Depends(get_db)):
+    row = db.get(KeywordMetricValidationHandoff, handoff_id)
+    if not row: raise HTTPException(404, "Rank & Rent handoff not found")
+    return _handoff_out(row, db)
+
+def _handoff_out(row: KeywordMetricValidationHandoff, db: Session):
+    evidence = db.get(KeywordMetricEvidence, row.evidence_id)
+    return KeywordMetricsHandoffOut(handoff_id=row.id, evidence_id=row.evidence_id, keyword=row.submitted_keyword, search_volume=evidence.avg_monthly_searches if evidence else None, country_code=row.country_code, location_target=row.location_target or {}, language_code=row.language_code, provider=row.provider, provider_keyword=row.provider_keyword, validation_profile=row.validation_profile_snapshot or {}, created_at=row.created_at, status="PENDING")
 
 
 @router.post("/runs/{run_id}/proxy-authority")
@@ -441,6 +473,33 @@ def recalculate_preview(project_id: str, payload: RunCreate, db: Session = Depen
         raise HTTPException(404, "Project not found")
     profile = payload.profile or ValidationProfile(**project.profile_snapshot)
     return preview_recalculation(db, project_id, profile, payload.candidate_ids)
+
+@router.post("/projects/{project_id}/validation-preview")
+def validation_preview(project_id: str, payload: RunCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Zero-network UI-4 preflight; downstream work stays conditional on fail-fast gates."""
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    profile = payload.profile or ValidationProfile(**project.profile_snapshot)
+    preview = preview_recalculation(db, project_id, profile, payload.candidate_ids)
+    return {
+        "project_id": project_id,
+        "project_name": project.name,
+        "candidate_ids": payload.candidate_ids,
+        "profile": profile.model_dump(),
+        "population_policy": {"enabled": profile.population_enabled, "minimum": profile.min_population, "maximum": profile.max_population},
+        "search_volume_policy": {"enabled": profile.search_volume_enabled, "minimum": profile.min_search_volume},
+        "authority_policy": {"threshold": profile.da_threshold, "required_weak": profile.required_low_da_count, "ideal_weak": profile.ideal_weak_domains, "depth": profile.organic_depth},
+        "kd_policy": {"enabled": profile.kd_enabled, "provider": profile.kd_provider, "threshold": profile.kd_threshold, "mode": profile.kd_mode},
+        "candidate_count": preview["total_affected"],
+        "evidence": preview["reusable_evidence_by_stage"],
+        "fresh_work": preview["estimated_provider_calls_by_stage"],
+        "conditional_work": {"serp": "CONDITIONAL_ON_POPULATION_AND_SV", "authority": "CONDITIONAL_ON_SERP", "kd": "CONDITIONAL_ON_DA_QUALIFICATION"},
+        "estimated_provider_calls": preview["estimated_provider_calls"],
+        "estimated_cost": preview["estimated_cost"],
+        "transport_would_occur": False,
+        "preview_network_requests": 0,
+    }
 
 
 @router.post("/projects/{project_id}/recalculate", response_model=RunOut)
