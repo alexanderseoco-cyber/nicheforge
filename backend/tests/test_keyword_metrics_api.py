@@ -9,7 +9,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from fastapi import FastAPI
 from app.api.routes import router
-from app.models.entities import KeywordMetricEvidence
+from app.models.entities import KeywordMetricEvidence, ProviderCall
 from app.api import routes
 
 app = FastAPI()
@@ -32,6 +32,8 @@ def test_preview_is_non_transporting(monkeypatch):
     response = client.post("/api/v1/keyword-metrics/preview", json={"keywords": ["term", "term"], "provider": "mock", "target": {"location_name": "United States", "country_code": "US"}})
     assert response.status_code == 200
     assert response.json()["transport_would_occur"] is False
+    assert response.json()["planned_rpc_count"] == 1
+    assert response.json()["fresh_cache_savings"] == 0
     app.dependency_overrides.clear(); db.close()
 
 
@@ -40,6 +42,9 @@ def test_research_with_mock_provider(monkeypatch):
     response = client.post("/api/v1/keyword-metrics/research", json={"keywords": ["term"], "provider": "mock", "target": {"location_name": "United States", "country_code": "US"}})
     assert response.status_code == 200
     assert response.json()["mapped_count"] == 1
+    call = db.query(ProviderCall).one()
+    assert call.stage == "keyword_metrics" and call.outcome == "SUCCESS"
+    assert call.execution_mode == "MOCK" and call.operation_count == 0
     app.dependency_overrides.clear(); db.close()
 
 
@@ -64,4 +69,13 @@ def test_get_evidence_retrieval(monkeypatch):
     db.add(evidence); db.commit()
     response = client.get(f"/api/v1/keyword-metrics/{evidence.id}")
     assert response.status_code == 200 and response.json()["submitted_keyword"] == "term"
+    app.dependency_overrides.clear(); db.close()
+
+
+def test_provider_telemetry_summary_is_local_only(monkeypatch):
+    client, db = _client(monkeypatch)
+    response = client.get("/api/v1/keyword-metrics/provider-telemetry")
+    assert response.status_code == 200
+    assert response.json()["actual_attempts"] == 0
+    assert response.json()["consumed_operations"] == 0
     app.dependency_overrides.clear(); db.close()

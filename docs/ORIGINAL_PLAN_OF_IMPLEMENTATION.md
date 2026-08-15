@@ -96,3 +96,98 @@ Checkpoints A–F are complete and approved. Provider Readiness is complete for 
 ## Provider Readiness & Live Integration Boundary
 
 The next authorized checkpoint is provider readiness only. Its credential and paid-call rules are defined in `docs/API_KEYS_AND_PROVIDER_ACCESS_RULES.md`. It must verify official provider contracts, mode separation, budget approval, source-policy selection, adaptive DA semantics, and safe evidence mapping before live calls. No broad paid production run is authorized.
+
+## Google Ads Operational Safety Layer — approved next checkpoint
+
+The accepted multi-city Search Volume scaling and 100,000-combination
+performance work is complete. The next checkpoint is operational safety only,
+as documented in `Google Ads Operational Safety Layer Plan-Per User Usage.md`.
+
+The implementation must begin with an audit of existing ProviderCall,
+authentication/user, configuration, transaction, and deployment infrastructure.
+Existing abstractions must be extended rather than duplicated. If a material
+architectural conflict is found, implementation must stop and report it before
+redesign.
+
+The approved scope includes explicit Google access-level gating, actual-attempt
+ProviderCall telemetry, rolling-24-hour provider capacity, separate NicheForge
+user quotas, per-run budgets, atomic concurrent reservations, centralized CID
+rate limiting, truthful provider-reached operation accounting, and a
+zero-network preview endpoint/UI.
+
+The effective executable allowance is the minimum of current user allowance
+and currently available provider capacity. This does not mutate the configured
+user quota when provider capacity changes.
+
+Phase 1 audit and Phase 2 access-gate implementation are complete. The audit
+confirmed that no authentication/user model exists, Google Search Volume
+ProviderCalls are not yet persisted at the multi-city boundary, and current
+access/quota metadata is not locally verified. Explicit production gating was
+added using verified access levels; per-user quota and reservation work remains
+deferred until a real user identity boundary is available.
+
+Phase 2 validation: 15 targeted tests passed, Python compilation passed,
+`git diff --check` passed, and all external-provider requests remained zero.
+
+Implementation and validation must make zero external provider requests. No
+automatic commit is authorized. Phase status remains implementation pending
+until the architecture audit and subsequent validations actually pass.
+
+Phase 3 actual-attempt telemetry has now been implemented at the existing
+multi-city provider chunk boundary. ProviderCall records are created only for
+actual chunk attempts, with a pre-transport STARTED record, execution mode,
+customer/target/language/chunk metadata, attempt number, duration,
+provider-reached classification, actual operation count, outcome, and
+sanitized failure details. Planned RPC counts remain planning/report data and
+are not treated as consumed provider operations. The additive migration is
+`c11providercalltelemetry`, based on `c10derivedmetrics`.
+
+Phase 3 validation so far: 10 focused multi-city tests passed, no provider
+requests were made, and `git diff --check` passed. Compilation was attempted
+but existing locked `__pycache__` files prevented replacement of generated
+bytecode; this is an environment/file-lock condition, not a reported source
+syntax failure. Single-keyword telemetry, rate limiting, operation budgets,
+and preview remain subsequent Phase 3 work.
+
+Single-keyword research telemetry is now covered as well. The standalone
+research route passes its database session and customer context into the
+provider-agnostic batch orchestrator, which persists one actual-attempt
+ProviderCall per provider chunk. Mock execution is marked MOCK with zero
+consumed operations. API/provider and multi-city telemetry tests pass with
+zero external requests. Rate limiting, operation budgets, and preview remain
+the next operational safeguards.
+
+The zero-network planning preview has been extended to expose total logical
+combinations, fresh-cache savings, provider-required work, target/language
+counts, chunk size, planned RPC count, operation-budget status, remaining
+provider capacity, and effective executable allowance. A local provider
+telemetry summary endpoint reports persisted actual attempts, outcomes,
+consumed operations, and submitted keyword counts without transport. Preview
+and telemetry API tests pass with zero external requests. The next step is a
+full focused regression and checkpoint review for the operational safety
+layer.
+
+Final Phase 3 hardening uses a rolling 24-hour provider-operation window, not
+calendar-day accounting. In addition, production-enabled Google transport is
+blocked unless the configured customer rate limiter is enabled. This prevents
+an accidental production configuration from running Keyword Planner calls
+without pacing. Both behaviors are covered by deterministic tests with zero
+provider requests.
+
+The configurable operation-budget guard is now implemented. An unset daily
+budget is explicitly `UNKNOWN_UNVERIFIED` and does not block execution. When
+configured, the guard atomically counts one operation per attempted Google
+RPC, scoped by customer and UTC day; it never counts keywords or planned
+combinations. Exhaustion is rejected before provider transport and recorded as
+`BUDGET_EXCEEDED`, distinct from provider rejection and pre-provider network
+failure. The focused rate-limit/budget/API/multi-city suite has 25 passing
+tests with zero external requests. Capacity telemetry reconciliation and the
+public zero-network preview remain next.
+
+The centralized customer rate limiter is now implemented at the Google Ads
+provider invocation boundary. It is disabled by default, configurable by
+requests per second, and serializes calls per customer without coupling
+different customers. Deterministic tests verify same-customer spacing,
+customer isolation, and disabled zero-wait behavior. No provider requests were
+made. The next safeguard is the configurable operation-budget guard; quota
+must count actual attempts rather than planned keyword combinations.

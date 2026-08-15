@@ -18,6 +18,8 @@ class KeywordMetricsSafetyConfig:
     requests_per_second: float = 1.0
     budget: float | None = None
     freshness_days: int = 30
+    production_enabled: bool = False
+    verified_access_level: str = "UNKNOWN"
 
     def validate(self, requested_items: int = 0, estimated_cost: float | None = 0.0) -> None:
         if self.provider not in {"mock", "imported", "google_ads", "dataforseo"}:
@@ -31,6 +33,12 @@ class KeywordMetricsSafetyConfig:
                 raise KeywordMetricsGuardError("Keyword metrics live execution requires explicit approval")
             if not self.credentials_configured:
                 raise KeywordMetricsGuardError("Keyword metrics provider credentials are not configured")
+        if self.provider == "google_ads" and self.production_enabled:
+            access_level = self.verified_access_level.upper()
+            if access_level not in {"BASIC", "STANDARD"}:
+                raise KeywordMetricsGuardError(
+                    "Google Ads production execution requires explicitly verified BASIC or STANDARD access"
+                )
         if self.budget is not None and estimated_cost is not None and estimated_cost > self.budget:
             raise ValueError("Estimated keyword metrics cost exceeds configured budget")
         if self.requests_per_second <= 0:

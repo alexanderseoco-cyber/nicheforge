@@ -119,6 +119,16 @@ class KeywordMetricsPreview(BaseModel):
     estimated_cost: float | None
     transport_would_occur: bool
     provider: str
+    total_combinations: int = 0
+    fresh_cache_savings: int = 0
+    keywords_requiring_provider_evidence: int = 0
+    target_count: int = 1
+    language_count: int = 1
+    chunk_size: int = 10_000
+    planned_rpc_count: int = 0
+    operation_budget_status: str = "UNKNOWN_UNVERIFIED"
+    provider_capacity_remaining: int | None = None
+    effective_executable_allowance: int | None = None
 
 
 class KeywordMetricResultOut(BaseModel):

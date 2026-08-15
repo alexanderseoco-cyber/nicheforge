@@ -1,5 +1,42 @@
 # NicheForge Task Completion Status
 
+## Google Ads operational safety layer — Phase 1 audit complete
+
+- Audited the Google historical-metrics boundary: `GoogleAdsKeywordMetricsProvider.fetch()` invokes `KeywordPlanIdeaService.generate_keyword_historical_metrics(request=request, retry=None)`; the multi-city route delegates to `MultiCityKeywordMetricsOrchestrator`, which calls the provider per target/chunk.
+- Existing `ProviderCall` exists for older pipeline stages, but the Google Keyword Metrics multi-city path does not currently persist per-chunk ProviderCall telemetry.
+- Existing settings include Google credentials, enablement/approval flags, batch size, request rate, freshness, and a legacy keyword-metrics budget field; no access-level, rolling provider-capacity, user quota, reservation, or centralized limiter implementation was found.
+- No user/authentication model or user identity dependency exists in the current backend. Per-user quota allocation therefore requires a deliberate authentication/user boundary rather than an assumed `user_id`.
+- Current deployment is FastAPI with SQLAlchemy sessions and SQLite/local development support; Docker Compose provides PostgreSQL and Redis services, but no distributed job/rate-limit integration is currently wired.
+- Active local database inspection found `ProviderCall` total = 0 and Google ProviderCall total = 0. Historical Google consumption cannot be reconstructed from this database.
+- No local developer-token access-level or Google quota metadata is persisted. Current access level, provider rolling limit, and remaining provider capacity remain UNKNOWN.
+- The installed Google Ads client exposes no local quota/access service or remaining-operation method.
+- Network requests during the audit: Google Ads 0; customer metadata 0; FX 0; SERP 0; other providers 0.
+- No implementation code, migration, configuration, or provider behavior was changed during the audit.
+- Reconciled plan reference: `Google Ads Operational Safety Layer Plan-Per User Usage.md`, Phase 1.
+- Next action requires an implementation decision for the missing authentication/user boundary and telemetry extension; do not assume or fabricate a user identity model.
+
+## Google Ads operational safety layer — Phase 2 access gate complete
+
+- Added explicit `GOOGLE_ADS_PRODUCTION_ENABLED` and `GOOGLE_ADS_VERIFIED_ACCESS_LEVEL` configuration.
+- Google production transport now requires explicitly verified `BASIC` or `STANDARD` access when production mode is enabled; `UNKNOWN`, `TEST`, and `EXPLORER` do not authorize production execution.
+- Reused the existing provider safety configuration and factory; no parallel provider abstraction was introduced.
+- Per-user quotas, reservations, and ProviderCall telemetry were not implemented in this phase because the audit found no authentication/user model and no Google Search Volume ProviderCall boundary persistence.
+- Validation: provider/access and multi-city targeted tests `15 passed`; Python compilation passed; `git diff --check` passed.
+- Network requests: Google Ads 0; customer metadata 0; FX 0; SERP 0; other providers 0.
+- Reconciled plan reference: `Google Ads Operational Safety Layer Plan-Per User Usage.md`, Phases 1–2.
+- Next phase: actual-attempt ProviderCall telemetry at the Google chunk boundary.
+
+## Google Ads operational safety layer — plan approved, implementation pending
+
+- Approved the revised plan in `Google Ads Operational Safety Layer Plan-Per User Usage.md`.
+- Incorporated the required architecture-audit-first rule: reuse existing ProviderCall, authentication, configuration, transaction, and deployment infrastructure before adding models or fields.
+- Incorporated the distinction between configured user quota and effective executable allowance: `min(user remaining allowance, provider currently available capacity)`.
+- Added explicit access-level gating, rolling-24-hour provider capacity, atomic concurrent reservations, actual-attempt telemetry, provider-reached versus pre-provider failure accounting, centralized customer rate limiting, and zero-network preview requirements.
+- No implementation was started in this update.
+- No migrations, provider requests, configuration changes, or commits were made for this stage.
+- Reconciled plan reference: `Google Ads Operational Safety Layer Plan-Per User Usage.md` and `PROJECT.md` section 15.
+- Next status: begin Phase 1 architecture audit, then report findings before architectural changes.
+
 **Current phase:** Provider Readiness & Live Integration Boundary
 **Status:** Provider Readiness complete; live provider activation intentionally deferred pending verified contracts, credentials, and explicit approval
 **Last updated:** 2026-08-11
@@ -499,6 +536,33 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Validation executed: foundation/evidence tests `9 passed`; diff check clean.
 - Compilation was attempted but Python could not replace two locked project `__pycache__` files; no source compilation error was reported.
 - No live Google Ads, DataForSEO, Moz, Ahrefs, or SV provider requests were made.
+
+### Google Ads operational safety layer — Phase 3 actual-attempt telemetry
+
+- Added additive `ProviderCall` telemetry for each keyword-metrics provider chunk at the existing multi-city transport boundary.
+- Telemetry records execution mode, customer/target/language context, chunk position and size, attempt number, duration, provider-reached status, actual operation count, outcome, and sanitized error category/message.
+- `STARTED` is flushed before transport so interrupted attempts remain auditable; planned RPC counts remain orchestration report data and are not written as provider usage.
+- Google live providers identify themselves as live transport; mocked providers remain `MOCK` with zero consumed operations.
+- Added migration `c11providercalltelemetry` from `c10derivedmetrics`.
+- Added regression coverage for successful chunk telemetry; 10 targeted multi-city tests passed.
+- Python test execution passed; `git diff --check` passed. Compilation was attempted but existing locked `__pycache__` files caused permission warnings; no source compilation error was observed.
+- Provider/network requests: 0. No commit made.
+- Next: extend telemetry coverage to the single-keyword research path and validate persisted telemetry/accounting before implementing rate limiting or operation-budget reservations.
+- Single-keyword `/keyword-metrics/research` now uses the same telemetry through the provider-agnostic batch orchestrator. API tests verify persisted mock `ProviderCall` state with zero consumed operations.
+- Combined telemetry validation: 11 API/provider tests and 10 multi-city tests passed; no provider/network requests were made.
+- Added centralized `CustomerRateLimiter` at the Google Ads provider invocation boundary. It is disabled by default, keys state by customer ID, serializes same-customer calls, and does not delay independent customers.
+- Added deterministic rate-limiter regressions; provider/safety/API tests: 13 passed. No provider/network requests were made and no commit was created.
+- Next: configurable operation-budget guard and actual-attempt capacity accounting.
+- Added `OperationBudgetGuard` with an explicit `UNKNOWN_UNVERIFIED` state when no daily limit is configured. Configured limits are atomic per customer/day and count actual attempted Google operations, never keywords or planned combinations.
+- Budget exhaustion is represented as `BUDGET_EXCEEDED` in chunk telemetry and occurs before provider transport. Provider/network and guard rejection remain distinguishable.
+- Rate-limit and budget tests are included in the 25-test focused validation; external provider requests remain 0. No commit made.
+- Next: persist/reconcile capacity telemetry and expose the zero-network planning preview.
+- The zero-network preview now reports total combinations, fresh-cache savings, provider-required keywords, target/language counts, chunk size, planned RPC count, budget status, provider capacity remaining, and effective executable allowance.
+- Added local `GET /keyword-metrics/provider-telemetry` summary for actual attempts, outcomes, consumed operations, and submitted keyword counts. It reads persisted records only and makes no provider calls.
+- Preview/telemetry API validation: 16 tests passed; AST and diff checks remain required; provider/network requests: 0. No commit made.
+- Phase 3 next review point: full focused regression, then decide whether operational safety layer is ready for a checkpoint commit.
+- Hardening review completed: operation capacity now uses a rolling 24-hour window rather than calendar-day buckets. Production-enabled Google transport also requires an enabled customer limiter before client transport can proceed.
+- Rolling-window and production-limiter guard tests pass; no provider requests made and no commit created.
 
 ### Search Volume UI / Commercial Insights update — current
 

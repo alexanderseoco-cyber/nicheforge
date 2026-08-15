@@ -330,3 +330,27 @@ The task status and original implementation plan must remain synchronized. A pha
 ## 14. Engineering Rule
 
 If code, implementation shortcuts or future chat instructions conflict with `docs/PROJECT_BLUEPRINT.md`, the blueprint wins unless an explicit ADR changes it.
+
+## 15. Approved Google Ads Operational Safety Stage
+
+The multi-city Search Volume batching and 100,000-combination performance
+checkpoint is accepted and committed. The next authorized stage is the
+provider operational safety layer documented in:
+
+`Google Ads Operational Safety Layer Plan-Per User Usage.md`
+
+This stage must begin with an architecture audit and must reuse existing
+ProviderCall, authentication, configuration, transaction, and deployment
+infrastructure wherever possible. It must not blindly create parallel models.
+
+The stage includes explicit Google access-level gating, actual-attempt
+telemetry, rolling-24-hour provider capacity, separate NicheForge per-user
+quotas, atomic run reservations, centralized customer rate limiting, truthful
+provider-reached operation accounting, and a zero-network preview endpoint.
+
+The effective executable allowance is always:
+
+`min(user remaining allowance, currently available provider capacity)`
+
+This does not rewrite configured user quotas. Implementation and validation must
+make zero external provider requests and must not commit automatically.

@@ -175,3 +175,26 @@ disabled by default and requires explicit approval for any live operation.
 - Monthly history is normalized, persisted, exposed, and tested.
 - Albany acceptance test proves both consumers use the same evidence correctly.
 - No unrelated provider activity occurs.
+
+## Google Ads operational safety layer — approved next stage
+
+The accepted multi-city scaling checkpoint is complete. The next implementation
+stage adds operational controls without redesigning batching, cache identity,
+FX normalization, evidence persistence, or Rank & Rent policy.
+
+The approved plan is documented in
+`Google Ads Operational Safety Layer Plan-Per User Usage.md` and covers:
+
+- explicit TEST/EXPLORER/BASIC/STANDARD/UNKNOWN access gating;
+- actual-attempt ProviderCall telemetry;
+- rolling provider capacity separate from NicheForge user quotas;
+- per-run budget accounting;
+- atomic reservations for concurrent runs;
+- centralized customer rate limiting;
+- truthful provider-reached versus pre-provider failure accounting;
+- zero-network preview and user-facing preflight.
+
+Implementation must begin with an architecture audit and proceed with zero
+external provider requests. User configured quotas remain separate from the
+currently available provider capacity; executable allowance is the minimum of
+the two. No live access-level or quota inference is permitted.

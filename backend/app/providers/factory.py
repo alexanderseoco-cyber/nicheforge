@@ -7,6 +7,8 @@ from app.providers.ahrefs import AhrefsDomainRatingProvider
 from app.providers.dataforseo_backlinks import DataForSEOBacklinkSummaryProvider
 from app.providers.keyword_metrics import (GoogleAdsKeywordMetricsProvider,
     ImportedKeywordMetricsProvider, MockKeywordMetricsProvider)
+from app.services.customer_rate_limiter import CustomerRateLimiter
+from app.services.operation_budget import OperationBudgetGuard
 
 
 def keyword_metrics_provider(*, imported_records=None, provider_name=None):
@@ -27,6 +29,13 @@ def keyword_metrics_provider(*, imported_records=None, provider_name=None):
             client_secret=s.google_ads_client_secret, refresh_token=s.google_ads_refresh_token,
             customer_id=s.google_ads_customer_id, login_customer_id=s.google_ads_login_customer_id,
             provider_currency_code=s.google_ads_currency_code,
+            production_enabled=s.google_ads_production_enabled,
+            verified_access_level=s.google_ads_verified_access_level,
+            rate_limiter=CustomerRateLimiter(
+                requests_per_second=s.keyword_metrics_requests_per_second,
+                enabled=s.keyword_metrics_rate_limit_enabled,
+            ),
+            operation_budget=OperationBudgetGuard(s.google_ads_daily_operation_budget),
         )
     if name == "dataforseo":
         return DataForSEOKeywordProvider(s.dataforseo_login or "", s.dataforseo_password or "")

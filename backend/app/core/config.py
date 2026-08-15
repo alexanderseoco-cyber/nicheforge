@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     keyword_metrics_provider: str = "imported"
     google_ads_enabled: bool = False
     google_ads_live_approved: bool = False
+    google_ads_production_enabled: bool = False
+    google_ads_verified_access_level: str = "UNKNOWN"
     google_ads_developer_token: str | None = None
     google_ads_customer_id: str | None = None
     google_ads_login_customer_id: str | None = None
@@ -51,6 +53,8 @@ class Settings(BaseSettings):
     google_ads_currency_code: str | None = None
     keyword_metrics_max_batch_size: int = 10_000
     keyword_metrics_requests_per_second: float = 1.0
+    keyword_metrics_rate_limit_enabled: bool = False
+    google_ads_daily_operation_budget: int | None = None
     keyword_metrics_budget: float | None = None
     keyword_metrics_freshness_days: int = 30
 

@@ -653,6 +653,19 @@ class ProviderCall(Base):
     currency: Mapped[str] = mapped_column(String(3), default="USD")
     error_category: Mapped[str | None] = mapped_column(String(80), nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    # Keyword-metrics chunk telemetry. These describe an actual attempt, not
+    # planner output; planned counts remain on the batch/run report.
+    customer_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    target_identity: Mapped[str | None] = mapped_column(String(240), nullable=True, index=True)
+    geo_target_resource: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    language_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    chunk_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chunk_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    submitted_keyword_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    attempt_number: Mapped[int] = mapped_column(Integer, default=1)
+    duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    provider_reached: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    operation_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), nullable=True, index=True)
     run_candidate_id: Mapped[str | None] = mapped_column(ForeignKey("run_candidates.id"), nullable=True, index=True)
 

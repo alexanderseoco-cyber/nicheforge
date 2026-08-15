@@ -56,13 +56,17 @@ class GoogleAdsKeywordMetricsProvider:
     is injectable so tests never need Google transport.
     """
     provider_name = "google_ads"
+    is_live_transport = True
 
     def __init__(self, *, enabled: bool = False, live_approved: bool = False,
                  credentials_configured: bool = False, developer_token: str | None = None,
                  client_id: str | None = None, client_secret: str | None = None,
                  refresh_token: str | None = None, customer_id: str | None = None,
                  login_customer_id: str | None = None, client_factory=None,
-                 provider_currency_code: str | None = None):
+                 provider_currency_code: str | None = None,
+                 production_enabled: bool = False,
+                 verified_access_level: str = "UNKNOWN", rate_limiter=None,
+                 operation_budget=None):
         self.enabled = enabled
         self.live_approved = live_approved
         self.credentials_configured = credentials_configured
@@ -73,11 +77,19 @@ class GoogleAdsKeywordMetricsProvider:
         self.customer_id = customer_id
         self.login_customer_id = login_customer_id
         self.provider_currency_code = provider_currency_code
+        self.production_enabled = production_enabled
+        self.verified_access_level = verified_access_level
+        self.rate_limiter = rate_limiter
+        self.operation_budget = operation_budget
         self.client_factory = client_factory
 
     async def fetch(self, requests: list[KeywordMetricRequest]) -> list[KeywordMetricResult]:
         KeywordMetricsSafetyConfig(provider=self.provider_name, enabled=self.enabled,
-            live_approved=self.live_approved, credentials_configured=self.credentials_configured).validate(requested_items=len(requests), estimated_cost=0.0)
+            live_approved=self.live_approved, credentials_configured=self.credentials_configured,
+            production_enabled=self.production_enabled,
+            verified_access_level=self.verified_access_level).validate(requested_items=len(requests), estimated_cost=0.0)
+        if self.production_enabled and (self.rate_limiter is None or not self.rate_limiter.enabled):
+            raise KeywordMetricsGuardError("Google Ads production transport requires an enabled customer rate limiter")
         if not requests:
             return []
         if not self.customer_id:
@@ -85,6 +97,10 @@ class GoogleAdsKeywordMetricsProvider:
         from app.providers.google_ads_keyword_metrics import build_google_ads_request
         client = self._client()
         service = client.get_service("KeywordPlanIdeaService")
+        if self.rate_limiter is not None:
+            await self.rate_limiter.acquire(self.customer_id)
+        if self.operation_budget is not None:
+            self.operation_budget.reserve_attempt(self.customer_id, 1)
         request = build_google_ads_request(client, self.customer_id, requests)
         response = service.generate_keyword_historical_metrics(request=request, retry=None)
         from app.providers.google_ads_keyword_metrics import map_google_ads_response

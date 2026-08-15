@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from sqlalchemy import select
+from datetime import datetime
 
 from app.db.session import get_db
 from app.models.entities import ImportBatch, Project, City, Candidate, Run, RunCandidate
@@ -18,7 +19,7 @@ from app.services.recalculation import preview_recalculation, recalculate, ledge
 from app.services.imports import export_candidate_history_csv, export_project_csv, export_run_csv, import_cities, import_keyword_export, import_manual_evidence, import_manual_moz_csv, import_moz, import_niches
 from app.providers.factory import keyword_metrics_provider
 from app.providers.contracts import KeywordMetricRequest
-from app.models.entities import KeywordMetricQuery, KeywordMetricEvidence, KeywordMetricBatch, KeywordMetricValidationHandoff, ProviderCountryGeoMapping, KeywordOpportunityMetrics
+from app.models.entities import KeywordMetricQuery, KeywordMetricEvidence, KeywordMetricBatch, KeywordMetricValidationHandoff, ProviderCountryGeoMapping, KeywordOpportunityMetrics, ProviderCall
 from app.services.keyword_metrics_batch import KeywordMetricsBatchOrchestrator
 from app.services.keyword_metrics_multi_city import MultiCityKeywordMetricsOrchestrator, StructuredLocation
 from app.providers.google_ads_geo import GoogleAdsGeoTargetResolver
@@ -44,12 +45,57 @@ def _metric_requests(payload: KeywordMetricsRequest):
 
 
 @router.post("/keyword-metrics/preview", response_model=KeywordMetricsPreview)
-async def keyword_metrics_preview(payload: KeywordMetricsRequest):
+async def keyword_metrics_preview(payload: KeywordMetricsRequest, db: Session = Depends(get_db)):
     requests = _metric_requests(payload)
     unique = {(r.keyword.strip().casefold(), r.location_name, r.language_code) for r in requests}
     provider = keyword_metrics_provider(provider_name=payload.provider)
-    return KeywordMetricsPreview(submitted_count=len(requests), deduplicated_count=len(unique), cache_hits=0,
-        provider_requests=0, estimated_cost=0.0, transport_would_occur=False, provider=provider.provider_name)
+    settings = get_settings()
+    chunk_size = max(1, getattr(settings, "keyword_metrics_max_batch_size", 10_000))
+    now = datetime.utcnow()
+    fresh = 0
+    for request in requests:
+        cached = db.query(KeywordMetricEvidence).filter(
+            KeywordMetricEvidence.provider == provider.provider_name,
+            KeywordMetricEvidence.submitted_keyword == request.keyword,
+            KeywordMetricEvidence.location_name == request.location_name,
+            KeywordMetricEvidence.language_code == request.language_code,
+            KeywordMetricEvidence.country_code == request.country_code,
+        ).order_by(KeywordMetricEvidence.fetched_at.desc()).first()
+        if cached and cached.fresh_until and cached.fresh_until > now and not payload.force_refresh:
+            fresh += 1
+    missing = max(0, len(unique) - fresh)
+    planned = (missing + chunk_size - 1) // chunk_size
+    budget = getattr(settings, "google_ads_daily_operation_budget", None)
+    used = db.query(ProviderCall).filter(
+        ProviderCall.provider == provider.provider_name,
+        ProviderCall.customer_id == settings.google_ads_customer_id,
+        ProviderCall.started_at >= datetime(now.year, now.month, now.day),
+        ProviderCall.operation_count == 1,
+    ).count() if provider.provider_name == "google_ads" else 0
+    remaining = max(0, budget - used) if budget is not None else None
+    return KeywordMetricsPreview(submitted_count=len(requests), deduplicated_count=len(unique), cache_hits=fresh,
+        provider_requests=0, estimated_cost=0.0, transport_would_occur=False, provider=provider.provider_name,
+        total_combinations=len(unique), fresh_cache_savings=fresh,
+        keywords_requiring_provider_evidence=missing, target_count=1,
+        language_count=len({r.language_code for r in requests}), chunk_size=chunk_size,
+        planned_rpc_count=planned, operation_budget_status=("CONFIGURED" if budget is not None else "UNKNOWN_UNVERIFIED"),
+        provider_capacity_remaining=remaining,
+        effective_executable_allowance=min(planned, remaining) if remaining is not None else planned)
+
+
+@router.get("/keyword-metrics/provider-telemetry")
+def keyword_metrics_provider_telemetry(db: Session = Depends(get_db)):
+    rows = db.query(ProviderCall).filter(ProviderCall.stage == "keyword_metrics").all()
+    return {
+        "provider": "google_ads",
+        "actual_attempts": len(rows),
+        "successful_attempts": sum(row.outcome == "SUCCESS" for row in rows),
+        "provider_rejections": sum(row.outcome == "PROVIDER_REJECTED" for row in rows),
+        "pre_provider_failures": sum(row.outcome == "NETWORK_FAILURE_BEFORE_PROVIDER" for row in rows),
+        "budget_rejections": sum(row.outcome == "BUDGET_EXCEEDED" for row in rows),
+        "consumed_operations": sum(row.operation_count or 0 for row in rows),
+        "submitted_keywords": sum(row.submitted_keyword_count or 0 for row in rows),
+    }
 
 
 @router.post("/keyword-metrics/research", response_model=KeywordMetricsResearchResponse)
@@ -58,7 +104,10 @@ async def keyword_metrics_research(payload: KeywordMetricsRequest, db: Session =
     batch = KeywordMetricBatch(provider=provider.provider_name, submitted_count=len(requests), status="RUNNING")
     db.add(batch); db.flush()
     try:
-        result = await KeywordMetricsBatchOrchestrator(provider).execute(requests)
+        settings = get_settings()
+        result = await KeywordMetricsBatchOrchestrator(
+            provider, db=db, customer_id=settings.google_ads_customer_id
+        ).execute(requests)
     except KeywordMetricsGuardError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:

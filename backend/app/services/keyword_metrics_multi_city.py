@@ -2,16 +2,18 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import hashlib
 from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
-from app.models.entities import KeywordMetricBatch, KeywordMetricBatchItem, KeywordMetricEvidence, KeywordMetricQuery, ProviderGeoMapping, ProviderCustomerMetadata, uid
+from app.models.entities import KeywordMetricBatch, KeywordMetricBatchItem, KeywordMetricEvidence, KeywordMetricQuery, ProviderCall, ProviderGeoMapping, ProviderCustomerMetadata, uid
 from app.providers.contracts import KeywordMetricRequest
 from app.services.keyword_metrics_batch import KeywordMetricsBatchOrchestrator
 from app.services.currency_normalization import normalize_to_usd
 from app.services.customer_currency import resolve_cached_customer_currency
 from app.services.monetary_enrichment import resolve_usd_metrics
 from app.services.fx_evidence import resolve_persisted_fx
+from app.services.operation_budget import OperationBudgetExceeded
 
 
 class SystemicProviderFailure(BaseException):
@@ -35,6 +37,22 @@ def is_systemic_failure(provider: str, stage: str, exc: BaseException) -> bool:
     return type(exc).__name__ in {"TransportError", "GoogleAdsException", "KeywordMetricsGuardError", "ValueError", "RuntimeError"} or any(
         token in message for token in ("oauth", "developer token", "permission", "unauthorized", "unsupported api", "transport", "grpc", "malformed")
     )
+
+
+def _provider_reached(exc: BaseException) -> bool:
+    """Conservatively distinguish provider responses from pre-provider failures."""
+    name = type(exc).__name__.casefold()
+    message = str(exc).casefold()
+    if any(token in message for token in ("credential_refresh", "dns", "tls", "connection", "timeout", "transport")):
+        return False
+    return name in {"googleadsexception", "grpcerror"} or any(
+        token in message for token in ("invalid_argument", "developer token", "permission", "unauthorized", "resource_exhausted", "grpc_status")
+    )
+
+
+def _safe_provider_error(exc: BaseException) -> str:
+    """Keep telemetry useful without persisting exception payloads verbatim."""
+    return f"{type(exc).__name__}: {str(exc)[:500]}"
 
 
 @dataclass(frozen=True)
@@ -205,8 +223,54 @@ class MultiCityKeywordMetricsOrchestrator:
         for target, entries in pending_by_target.items():
             for start in range(0, len(entries), self.chunk_size):
                 chunk = entries[start:start + self.chunk_size]
+                chunk_index = (start // self.chunk_size) + 1
+                first_request = chunk[0][1]
+                location_target = first_request.location_target or {}
+                geo_targets = location_target.get("geo_target_constants") or location_target.get("geo_targets") or []
+                geo_resource = geo_targets[0] if geo_targets else None
+                cache_key = "keyword-metrics:" + hashlib.sha256(
+                    f"{batch.id}|{target}|{chunk_index}".encode("utf-8")
+                ).hexdigest()
+                provider_name = getattr(self.provider, "provider_name", "unknown")
+                live_transport = bool(getattr(self.provider, "is_live_transport", False))
+                provider_call = ProviderCall(
+                    provider=provider_name,
+                    execution_mode="LIVE" if live_transport else "MOCK",
+                    stage="keyword_metrics",
+                    operation="generate_keyword_historical_metrics",
+                    request_cache_key=cache_key,
+                    outcome="STARTED",
+                    cache_hit=False,
+                    source_kind="live_api" if live_transport else "mock",
+                    units=None,
+                    started_at=datetime.utcnow(),
+                    estimated_cost=0.0,
+                    actual_cost=None,
+                    currency="USD",
+                    customer_id=self.customer_id,
+                    target_identity=target,
+                    geo_target_resource=geo_resource,
+                    language_code=first_request.language_code,
+                    chunk_index=chunk_index,
+                    chunk_count=report["planned_rpc_count"],
+                    submitted_keyword_count=len(chunk),
+                    attempt_number=1,
+                    provider_reached=None,
+                    operation_count=None,
+                )
+                self.db.add(provider_call)
+                # Persist STARTED before transport so an interrupted process is
+                # auditable as an incomplete attempt rather than disappearing.
+                self.db.flush()
                 try:
                     returned = await self.provider.fetch([request for _, request in chunk])
+                    finished_at = datetime.utcnow()
+                    provider_call.finished_at = finished_at
+                    provider_call.duration_ms = max(0.0, (finished_at - provider_call.started_at).total_seconds() * 1000)
+                    provider_call.outcome = "SUCCESS"
+                    provider_call.provider_reached = live_transport
+                    provider_call.operation_count = 1 if live_transport else 0
+                    provider_call.actual_cost = 0.0
                     report["historical_live_requests"] += 1
                     report["actual_rpc_count"] += 1
                     report["keywords_per_rpc"].append(len(chunk))
@@ -215,6 +279,16 @@ class MultiCityKeywordMetricsOrchestrator:
                         if result.provider_keyword:
                             batched_results[(target, result.provider_keyword)] = result
                 except Exception as exc:
+                    finished_at = datetime.utcnow()
+                    reached = _provider_reached(exc)
+                    provider_call.finished_at = finished_at
+                    provider_call.duration_ms = max(0.0, (finished_at - provider_call.started_at).total_seconds() * 1000)
+                    provider_call.provider_reached = reached
+                    provider_call.operation_count = 1 if reached else 0
+                    provider_call.actual_cost = 0.0 if reached else None
+                    provider_call.outcome = "BUDGET_EXCEEDED" if isinstance(exc, OperationBudgetExceeded) else ("PROVIDER_REJECTED" if reached else "NETWORK_FAILURE_BEFORE_PROVIDER")
+                    provider_call.error_category = type(exc).__name__
+                    provider_call.error_message = _safe_provider_error(exc)
                     report["historical_live_requests"] += 1
                     report["historical_failures"] += len(chunk)
                     for item, _ in chunk:

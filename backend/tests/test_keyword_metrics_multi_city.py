@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
-from app.models.entities import KeywordMetricBatch, ProviderGeoMapping
+from app.models.entities import KeywordMetricBatch, ProviderCall, ProviderGeoMapping
 from app.models.entities import ProviderCustomerMetadata
 from app.providers.contracts import KeywordMetricResult
 from app.services.keyword_metrics_multi_city import MultiCityKeywordMetricsOrchestrator, StructuredLocation, estimate_provider_batches
@@ -65,6 +65,26 @@ async def test_multi_city_batches_keywords_per_target():
     report = await MultiCityKeywordMetricsOrchestrator(db, provider, resolver).run([f"keyword {i}" for i in range(1000)], [StructuredLocation("Albany", "GA")], batch=batch)
     assert report["historical_live_requests"] == 1 and provider.calls == 1
     assert report["historical_successes"] == 1000
+
+
+@pytest.mark.asyncio
+async def test_multi_city_persists_actual_chunk_provider_call_telemetry():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    provider = FakeProvider(); resolver = FakeResolver()
+    batch = KeywordMetricBatch(provider="google_ads", submitted_count=3, status="RUNNING"); db.add(batch); db.flush()
+    await MultiCityKeywordMetricsOrchestrator(db, provider, resolver).run(
+        ["keyword 1", "keyword 2", "keyword 3"], [StructuredLocation("Albany", "GA")], batch=batch
+    )
+    call = db.query(ProviderCall).one()
+    assert call.operation == "generate_keyword_historical_metrics"
+    assert call.execution_mode == "MOCK"
+    assert call.outcome == "SUCCESS"
+    assert call.target_identity == "Albany, GA"
+    assert call.submitted_keyword_count == 3
+    assert call.chunk_index == 1 and call.chunk_count == 1
+    assert call.provider_reached is False and call.operation_count == 0
+    assert call.finished_at is not None and call.duration_ms is not None
 
 
 EXACT_FIFTY_CITIES = [
