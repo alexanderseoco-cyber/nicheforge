@@ -695,6 +695,54 @@ class UserSession(Base):
     client_type: Mapped[str] = mapped_column(String(20), default="WEB")
 
 
+class UserProviderQuota(Base):
+    __tablename__ = "user_provider_quotas"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(80), index=True)
+    daily_allowance: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("user_id", "provider", name="uq_user_provider_quota"),)
+
+
+class UserQuotaBonus(Base):
+    __tablename__ = "user_quota_bonuses"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(80), index=True)
+    operations: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class RunReservation(Base):
+    __tablename__ = "run_reservations"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(80), index=True)
+    batch_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    reserved_operations: Mapped[int] = mapped_column(Integer)
+    consumed_operations: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="ACTIVE", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class UserProviderUsage(Base):
+    __tablename__ = "user_provider_usage"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(80), index=True)
+    reservation_id: Mapped[str | None] = mapped_column(ForeignKey("run_reservations.id"), nullable=True, index=True)
+    provider_call_id: Mapped[str | None] = mapped_column(ForeignKey("provider_calls.id"), nullable=True, index=True)
+    operation_count: Mapped[int] = mapped_column(Integer, default=0)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class ImportBatch(Base):
     __tablename__ = "import_batches"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)

@@ -4,7 +4,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.db.session import get_db
-from app.models.entities import User, UserSession
+from app.models.entities import User, UserSession, UserProviderQuota, UserQuotaBonus
+from app.services.user_quotas import snapshot, DEFAULT_PROVIDER
 from app.services.auth import decode_access_token, hash_password, issue_access_token, new_refresh_token, normalize_email, refresh_token_hash, verify_password
 from app.services.auth_rate_limit import AuthAttemptLimiter
 
@@ -107,3 +108,40 @@ def update_user(user_id: str, payload: UserUpdateRequest, _: User = Depends(requ
         user.status = payload.status
     if payload.display_name is not None: user.display_name = payload.display_name
     db.commit(); db.refresh(user); return _safe_user(user)
+
+class QuotaUpdateRequest(BaseModel):
+    daily_allowance: int = Field(ge=0)
+    enabled: bool = True
+class BonusRequest(BaseModel):
+    operations: int = Field(gt=0)
+    expires_at: datetime
+    reason: str | None = None
+
+@router.get("/admin/users/{user_id}/quota")
+def get_quota(user_id: str, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    if not db.get(User, user_id): raise HTTPException(404, "User not found")
+    return {"user_id": user_id, "provider": DEFAULT_PROVIDER, **snapshot(db, user_id)}
+
+@router.patch("/admin/users/{user_id}/quota")
+def update_quota(user_id: str, payload: QuotaUpdateRequest, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    if not db.get(User, user_id): raise HTTPException(404, "User not found")
+    row = db.query(UserProviderQuota).filter_by(user_id=user_id, provider=DEFAULT_PROVIDER).first()
+    if row is None: row = UserProviderQuota(user_id=user_id, provider=DEFAULT_PROVIDER); db.add(row)
+    row.daily_allowance = payload.daily_allowance; row.enabled = payload.enabled; db.commit()
+    return {"user_id": user_id, "provider": DEFAULT_PROVIDER, **snapshot(db, user_id)}
+
+@router.post("/admin/users/{user_id}/quota/bonuses")
+def add_bonus(user_id: str, payload: BonusRequest, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    if not db.get(User, user_id): raise HTTPException(404, "User not found")
+    if payload.expires_at <= datetime.utcnow(): raise HTTPException(422, "Bonus must expire in the future")
+    row = UserQuotaBonus(user_id=user_id, provider=DEFAULT_PROVIDER, operations=payload.operations, expires_at=payload.expires_at, reason=payload.reason, created_by=admin.id)
+    db.add(row); db.commit(); db.refresh(row); return {"id": row.id, "user_id": user_id, "provider": DEFAULT_PROVIDER, "operations": row.operations, "expires_at": row.expires_at}
+
+@router.get("/admin/users/{user_id}/usage")
+def get_usage(user_id: str, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    if not db.get(User, user_id): raise HTTPException(404, "User not found")
+    return {"user_id": user_id, "provider": DEFAULT_PROVIDER, **snapshot(db, user_id)}
+
+@router.get("/me/quota")
+def my_quota(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return {"user_id": user.id, "provider": DEFAULT_PROVIDER, **snapshot(db, user.id)}

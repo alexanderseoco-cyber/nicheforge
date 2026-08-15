@@ -53,6 +53,48 @@ Every new change, completed task, milestone, or blocked task must update this st
 
 The implementation plan and this status file must remain synchronized. A phase may not be marked implemented until its required work and validation are complete.
 
+## Final infrastructure phase — Per-user quotas and atomic reservations — in progress
+
+- Incorporated the approved amendments: ProviderCall.operation_count remains
+  authoritative; UserProviderUsage is attribution only; RunReservation is
+  temporary capacity; unused reservations release; retries require additional
+  atomic capacity; bonuses are immutable and expiry-aware; preview is
+  non-mutating; identity is derived only from get_current_user().
+- Added `Per-User Quotas & Atomic Reservations.md` and reconciled PROJECT.md and
+  docs/ORIGINAL_PLAN_OF_IMPLEMENTATION.md.
+- Added quota/reservation models and migration `c13userquotas`.
+- Added quota service and admin/user quota APIs; Search Volume routes require
+  authenticated identity.
+- Validation so far: AST parsing passed for 60 backend/migration files.
+- Remaining: focused quota/auth/API tests, isolated migration upgrade,
+  frontend authenticated request integration, and diff check. External
+  provider requests: 0. No commit made.
+
+## Final infrastructure phase — implementation checkpoint
+
+- Implemented authenticated per-user quota state, immutable expiring bonuses,
+  atomic reservations, partial-consumption release, and user usage attribution.
+- Added admin quota/bonus/usage endpoints and `/me/quota`; Search Volume
+  preview/research/refresh/multi-city execution now derive identity solely from
+  the authenticated access token.
+- Updated the Search Volume frontend to send the session access token and give
+  a clear sign-in error when absent.
+- Added migration `c13userquotas` and quota regression tests.
+- Validation executed: quota/auth/API focused suite `12 passed`; AST parsing
+  `60 files passed`; frontend TypeScript passed; `git diff --check` passed.
+- Provider/network requests: 0. No commit made.
+- Alembic diagnosis confirmed there is one repository head, `c13userquotas`;
+  `c8countrygeomappings` is the current development database revision, not a
+  second head. No historical migration was rewritten and no merge migration
+  was needed.
+- Fresh empty-database upgrade to `head` passed. A database upgraded to
+  `c8countrygeomappings` then upgraded to `head` also passed. The quota/auth
+  schema converges through the existing linear chain.
+- Final validation: focused quota/auth/API suite `12 passed`; AST parsing
+  `60 files passed`; frontend TypeScript passed; `git diff --check` passed.
+- Final infrastructure phase: ACCEPTED pending human review/commit. External
+  provider requests: 0. Changes remain uncommitted.
+
 ## Latest update
 
 - Reconciled the stale status header with the completed Checkpoints Aâ€“F and Provider Readiness history below.

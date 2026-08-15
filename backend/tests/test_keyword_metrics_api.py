@@ -9,7 +9,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from fastapi import FastAPI
 from app.api.routes import router
-from app.models.entities import KeywordMetricEvidence, ProviderCall, User
+from app.models.entities import KeywordMetricEvidence, ProviderCall, User, UserProviderQuota
 from app.services.auth import hash_password, issue_access_token
 from app.api import routes
 from app.api import auth_routes
@@ -27,12 +27,15 @@ def _client(monkeypatch, provider="mock"):
     monkeypatch.setattr(routes, "get_settings", lambda: settings, raising=False)
     monkeypatch.setattr(auth_routes, "get_settings", lambda: settings, raising=False)
     monkeypatch.setattr("app.providers.factory.get_settings", lambda: settings)
-    return TestClient(app, raise_server_exceptions=False), db
+    user = User(email="researcher@example.com", password_hash=hash_password("a sufficiently strong password"), role="USER", status="ACTIVE")
+    db.add(user); db.flush(); db.add(UserProviderQuota(user_id=user.id, provider=provider, daily_allowance=100, enabled=True)); db.commit()
+    token = issue_access_token(user.id, user.role, "test-secret", 900)
+    return TestClient(app, raise_server_exceptions=False), db, {"Authorization": f"Bearer {token}"}
 
 
 def test_preview_is_non_transporting(monkeypatch):
-    client, db = _client(monkeypatch)
-    response = client.post("/api/v1/keyword-metrics/preview", json={"keywords": ["term", "term"], "provider": "mock", "target": {"location_name": "United States", "country_code": "US"}})
+    client, db, headers = _client(monkeypatch)
+    response = client.post("/api/v1/keyword-metrics/preview", headers=headers, json={"keywords": ["term", "term"], "provider": "mock", "target": {"location_name": "United States", "country_code": "US"}})
     assert response.status_code == 200
     assert response.json()["transport_would_occur"] is False
     assert response.json()["planned_rpc_count"] == 1
@@ -41,8 +44,8 @@ def test_preview_is_non_transporting(monkeypatch):
 
 
 def test_research_with_mock_provider(monkeypatch):
-    client, db = _client(monkeypatch)
-    response = client.post("/api/v1/keyword-metrics/research", json={"keywords": ["term"], "provider": "mock", "target": {"location_name": "United States", "country_code": "US"}})
+    client, db, headers = _client(monkeypatch)
+    response = client.post("/api/v1/keyword-metrics/research", headers=headers, json={"keywords": ["term"], "provider": "mock", "target": {"location_name": "United States", "country_code": "US"}})
     assert response.status_code == 200
     assert response.json()["mapped_count"] == 1
     call = db.query(ProviderCall).one()
@@ -52,22 +55,22 @@ def test_research_with_mock_provider(monkeypatch):
 
 
 def test_unknown_provider_is_rejected(monkeypatch):
-    client, db = _client(monkeypatch, "not-a-provider")
-    response = client.post("/api/v1/keyword-metrics/preview", json={"keywords": ["term"], "provider": "not-a-provider", "target": {"location_name": "United States", "country_code": "US"}})
+    client, db, headers = _client(monkeypatch, "not-a-provider")
+    response = client.post("/api/v1/keyword-metrics/preview", headers=headers, json={"keywords": ["term"], "provider": "not-a-provider", "target": {"location_name": "United States", "country_code": "US"}})
     assert response.status_code == 500
     app.dependency_overrides.clear(); db.close()
 
 
 def test_unmapped_response_is_serialized(monkeypatch):
-    client, db = _client(monkeypatch, "imported")
-    response = client.post("/api/v1/keyword-metrics/research", json={"keywords": ["term"], "provider": "imported", "target": {"location_name": "United States", "country_code": "US"}})
+    client, db, headers = _client(monkeypatch, "imported")
+    response = client.post("/api/v1/keyword-metrics/research", headers=headers, json={"keywords": ["term"], "provider": "imported", "target": {"location_name": "United States", "country_code": "US"}})
     assert response.status_code == 200
     assert response.json()["unmapped_count"] == 1
     app.dependency_overrides.clear(); db.close()
 
 
 def test_get_evidence_retrieval(monkeypatch):
-    client, db = _client(monkeypatch)
+    client, db, _ = _client(monkeypatch)
     evidence = KeywordMetricEvidence(query_id="q", submitted_keyword="term", provider_keyword="term", normalized_keyword="term", provider="mock", source_kind="mock", mapping_status="MAPPED")
     db.add(evidence); db.commit()
     response = client.get(f"/api/v1/keyword-metrics/{evidence.id}")
@@ -76,7 +79,7 @@ def test_get_evidence_retrieval(monkeypatch):
 
 
 def test_provider_telemetry_summary_is_local_only(monkeypatch):
-    client, db = _client(monkeypatch)
+    client, db, _ = _client(monkeypatch)
     admin = User(email="admin@example.com", password_hash=hash_password("a sufficiently strong password"), role="ADMIN", status="ACTIVE")
     db.add(admin); db.commit()
     token = issue_access_token(admin.id, admin.role, "test-secret", 900)

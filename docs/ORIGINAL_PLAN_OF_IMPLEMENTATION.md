@@ -218,3 +218,15 @@ implemented. Search Volume execution remains staged for authenticated rollout
 after frontend integration so existing local anonymous workflows are not
 silently broken. Focused authentication/provider tests pass with zero network
 requests; per-user quotas and reservations remain a future phase.
+
+## Final infrastructure phase — per-user quotas and atomic reservations
+
+The authentication foundation is complete. This checkpoint extends it with
+UserProviderQuota, immutable expiring UserQuotaBonus, RunReservation, and
+UserProviderUsage. ProviderCall operation counts remain authoritative for
+external consumption; usage is attribution only. Reservations are atomic,
+preview is non-mutating, unused capacity is released, and retries require
+additional atomic capacity. Search Volume routes derive identity only from the
+authenticated dependency. No billing or subscriptions are included. Work and
+validation are zero-network and uncommitted; after acceptance, Phase 3 Rank &
+Rent Engine resumes.

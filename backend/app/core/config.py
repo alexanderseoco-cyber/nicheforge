@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     auth_refresh_token_lifetime_seconds: int = 2_592_000
     keyword_metrics_budget: float | None = None
     keyword_metrics_freshness_days: int = 30
+    user_google_ads_daily_allowance: int = 0
 
 
 @lru_cache

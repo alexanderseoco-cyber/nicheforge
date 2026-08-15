@@ -354,3 +354,13 @@ The effective executable allowance is always:
 
 This does not rewrite configured user quotas. Implementation and validation must
 make zero external provider requests and must not commit automatically.
+
+## Final infrastructure phase — Per-user quotas and atomic reservations
+
+See `Per-User Quotas & Atomic Reservations.md`. ProviderCall.operation_count is
+the source of truth for external consumption; UserProviderUsage only attributes
+that usage to the authenticated user. RunReservation is temporary capacity and
+releases unused capacity. Bonuses are immutable and expiry-aware. Search Volume
+execution and preview derive identity only from get_current_user(). Billing and
+subscriptions are out of scope. After acceptance, infrastructure work stops
+and Phase 3 Rank & Rent resumes.

@@ -24,6 +24,9 @@ from app.services.keyword_metrics_batch import KeywordMetricsBatchOrchestrator
 from app.services.keyword_metrics_multi_city import MultiCityKeywordMetricsOrchestrator, StructuredLocation
 from app.providers.google_ads_geo import GoogleAdsGeoTargetResolver
 from app.core.config import get_settings
+from app.api.auth_routes import get_current_user
+from app.models.entities import User, RunReservation
+from app.services.user_quotas import reserve, finish, snapshot
 from app.providers.keyword_metrics_safety import KeywordMetricsGuardError
 from app.services.currency_normalization import normalize_to_usd
 from app.services.customer_currency import resolve_cached_customer_currency
@@ -46,7 +49,7 @@ def _metric_requests(payload: KeywordMetricsRequest):
 
 
 @router.post("/keyword-metrics/preview", response_model=KeywordMetricsPreview)
-async def keyword_metrics_preview(payload: KeywordMetricsRequest, db: Session = Depends(get_db)):
+async def keyword_metrics_preview(payload: KeywordMetricsRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     requests = _metric_requests(payload)
     unique = {(r.keyword.strip().casefold(), r.location_name, r.language_code) for r in requests}
     provider = keyword_metrics_provider(provider_name=payload.provider)
@@ -74,6 +77,7 @@ async def keyword_metrics_preview(payload: KeywordMetricsRequest, db: Session = 
         ProviderCall.operation_count == 1,
     ).count() if provider.provider_name == "google_ads" else 0
     remaining = max(0, budget - used) if budget is not None else None
+    user_allowance = snapshot(db, user.id, payload.provider)
     return KeywordMetricsPreview(submitted_count=len(requests), deduplicated_count=len(unique), cache_hits=fresh,
         provider_requests=0, estimated_cost=0.0, transport_would_occur=False, provider=provider.provider_name,
         total_combinations=len(unique), fresh_cache_savings=fresh,
@@ -81,7 +85,7 @@ async def keyword_metrics_preview(payload: KeywordMetricsRequest, db: Session = 
         language_count=len({r.language_code for r in requests}), chunk_size=chunk_size,
         planned_rpc_count=planned, operation_budget_status=("CONFIGURED" if budget is not None else "UNKNOWN_UNVERIFIED"),
         provider_capacity_remaining=remaining,
-        effective_executable_allowance=min(planned, remaining) if remaining is not None else planned)
+        effective_executable_allowance=min(planned, remaining, user_allowance["available"]) if remaining is not None else min(planned, user_allowance["available"]))
 
 
 @router.get("/keyword-metrics/provider-telemetry")
@@ -100,18 +104,26 @@ def keyword_metrics_provider_telemetry(_: object = Depends(require_admin), db: S
 
 
 @router.post("/keyword-metrics/research", response_model=KeywordMetricsResearchResponse)
-async def keyword_metrics_research(payload: KeywordMetricsRequest, db: Session = Depends(get_db)):
+async def keyword_metrics_research(payload: KeywordMetricsRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     requests = _metric_requests(payload); provider = keyword_metrics_provider(provider_name=payload.provider)
     batch = KeywordMetricBatch(provider=provider.provider_name, submitted_count=len(requests), status="RUNNING")
     db.add(batch); db.flush()
+    reservation = None
     try:
         settings = get_settings()
+        planned = (len({r.keyword.strip().casefold() for r in requests}) + max(1, getattr(settings, "keyword_metrics_max_batch_size", 10_000)) - 1) // max(1, getattr(settings, "keyword_metrics_max_batch_size", 10_000))
+        try:
+            reservation = reserve(db, user.id, provider.provider_name, planned, batch.id, getattr(settings, "google_ads_daily_operation_budget", None), getattr(settings, "google_ads_customer_id", None))
+        except ValueError as exc:
+            db.rollback(); raise HTTPException(status_code=409, detail=str(exc)) from exc
         result = await KeywordMetricsBatchOrchestrator(
             provider, db=db, customer_id=settings.google_ads_customer_id
         ).execute(requests)
     except KeywordMetricsGuardError as exc:
+        if reservation: finish(db, reservation, 0)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
+        if reservation: finish(db, reservation, 0)
         # Keep provider/runtime failures JSON-shaped so browser clients receive
         # a readable API error instead of a CORS-looking network failure.
         safe_type = type(exc).__name__
@@ -130,6 +142,9 @@ async def keyword_metrics_research(payload: KeywordMetricsRequest, db: Session =
             item.usd_cpc, item.usd_low_bid, item.usd_high_bid = usd.usd_cpc, usd.usd_low_bid, usd.usd_high_bid
             item.fx_rate, item.fx_rate_date, item.fx_source = usd.fx_rate, usd.fx_rate_date, usd.fx_source
             db.add(KeywordMetricEvidence(query_id=query.id, submitted_keyword=request.keyword, provider_keyword=item.provider_keyword or item.keyword, normalized_keyword=request.keyword.strip().casefold(), location_name=request.location_name, location_target=request.location_target or {}, language_code=request.language_code, country_code=request.country_code, provider=item.provider, source_kind=item.provider, avg_monthly_searches=item.avg_monthly_searches, competition=item.competition, competition_index=item.competition_index, cpc=item.cpc, low_bid=item.low_bid, high_bid=item.high_bid, provider_currency_code=item.provider_currency_code, usd_cpc=item.usd_cpc, usd_low_bid=item.usd_low_bid, usd_high_bid=item.usd_high_bid, fx_rate=item.fx_rate, fx_rate_date=item.fx_rate_date, fx_source=item.fx_source, monthly_history=item.monthly_history, raw_payload=item.raw or {}, cost=item.cost, mapping_status=result.mapping_status.get(request.keyword, "MAPPED")))
+    if reservation:
+        consumed = int(sum((row.operation_count or 0) for row in db.query(ProviderCall).filter(ProviderCall.stage == "keyword_metrics", ProviderCall.started_at >= batch.created_at).all()))
+        finish(db, reservation, consumed)
     batch.returned_count=len(result.results) - result.unmapped_count; batch.mapped_count=batch.returned_count; batch.unmapped_count=result.unmapped_count; batch.status="COMPLETED"; batch.cost=0.0; db.commit()
     output=[]
     for k, v in result.results.items():
@@ -161,12 +176,12 @@ def keyword_metrics_detail(evidence_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/keyword-metrics/refresh", response_model=KeywordMetricsResearchResponse)
-async def keyword_metrics_refresh(payload: KeywordMetricsRequest, db: Session = Depends(get_db)):
-    return await keyword_metrics_research(payload, db)
+async def keyword_metrics_refresh(payload: KeywordMetricsRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return await keyword_metrics_research(payload, user, db)
 
 
 @router.post("/keyword-metrics/research-batch")
-async def keyword_metrics_research_batch(payload: KeywordMetricsBatchRequest, db: Session = Depends(get_db)):
+async def keyword_metrics_research_batch(payload: KeywordMetricsBatchRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Resumable structured-location research; policy is calculated without transport."""
     if payload.provider != "google_ads":
         raise HTTPException(400, "research-batch requires explicit provider=google_ads")
@@ -174,6 +189,11 @@ async def keyword_metrics_research_batch(payload: KeywordMetricsBatchRequest, db
     batch = KeywordMetricBatch(provider=provider.provider_name, submitted_count=len(payload.keywords) * len(payload.locations), status="RUNNING")
     db.add(batch); db.flush()
     settings = get_settings()
+    planned = (len(payload.keywords) + max(1, settings.keyword_metrics_max_batch_size) - 1) // max(1, settings.keyword_metrics_max_batch_size) * len(payload.locations)
+    try:
+        reservation = reserve(db, user.id, provider.provider_name, planned, batch.id, getattr(settings, "google_ads_daily_operation_budget", None), getattr(settings, "google_ads_customer_id", None))
+    except ValueError as exc:
+        db.rollback(); raise HTTPException(status_code=409, detail=str(exc)) from exc
     resolver = GoogleAdsGeoTargetResolver(
         client_factory=getattr(provider, "_client", None),
         enabled=settings.google_ads_enabled, live_approved=settings.google_ads_live_approved,
@@ -183,7 +203,11 @@ async def keyword_metrics_research_batch(payload: KeywordMetricsBatchRequest, db
     from app.providers.google_ads_keyword_metrics import language_resource
     # FX transport is opt-in.  A missing PKR->USD rate must not silently
     # trigger an external FX request during keyword research.
-    report = await MultiCityKeywordMetricsOrchestrator(db, provider, resolver, fx_provider=None, customer_id=settings.google_ads_customer_id, provider_currency_code=settings.google_ads_currency_code, minimum_sv=payload.minimum_sv or 260, freshness_days=settings.keyword_metrics_freshness_days).run(payload.keywords, locations, batch=batch)
+    try:
+        report = await MultiCityKeywordMetricsOrchestrator(db, provider, resolver, fx_provider=None, customer_id=settings.google_ads_customer_id, provider_currency_code=settings.google_ads_currency_code, minimum_sv=payload.minimum_sv or 260, freshness_days=settings.keyword_metrics_freshness_days).run(payload.keywords, locations, batch=batch)
+    except Exception:
+        finish(db, reservation, 0); db.commit(); raise
+    finish(db, reservation, int(report.get("provider_requests", 0)))
     for row in report["results"]:
         evidence = db.get(KeywordMetricEvidence, row.get("evidence_id")) if row.get("evidence_id") else None
         if evidence:
