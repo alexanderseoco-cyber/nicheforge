@@ -95,6 +95,98 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Final infrastructure phase: ACCEPTED pending human review/commit. External
   provider requests: 0. Changes remain uncommitted.
 
+## UI/UX redesign roadmap — documented
+
+- Added canonical workflow document `NicheForge UI UX Redesign Roadmap.md`.
+- Documented completed App Shell and Search Volume UI work, trend/tooltips,
+  USD/commercial presentation, import/copy/export, authentication and
+  allowance feedback, and the next Rank & Rent Engine/UI phases.
+- Reconciled PROJECT.md and docs/ORIGINAL_PLAN_OF_IMPLEMENTATION.md.
+- No provider requests, schema changes, or application behavior changes were
+  made for this documentation update.
+
+## Search Volume → Rank & Rent product bridge — roadmap addition
+
+- Added the approved handoff agenda to the canonical UI roadmap.
+- Scope includes configurable initial `SV >= 260` qualification, local
+  non-blocking prompts, neutral R&R Candidate badges, per-row and bulk
+  handoff, review-before-handoff project/profile selection, duplicate/history
+  detection, evidence-preserving handoff, and a handoff ledger event.
+- Added table productivity requirements: SV sorting, true-zero versus missing
+  semantics, quick filters, SV-only/keyword-only/keyword+SV/full copy modes,
+  selection scopes, and qualifying statistics-card filtering.
+- Explicitly preserved the rule that handoff makes zero provider calls and does
+  not itself mean Rank & Rent PASS/IDEAL.
+- Documentation-only update; provider requests: 0. No application code or
+  schema changes were made.
+
+## UI-4A/UI-4B — Validator workspace and zero-network preview — in progress
+
+- Added `POST /projects/{project_id}/validation-preview`, reusing the existing
+  recalculation/evidence preview service. It reports profile policies,
+  reusable evidence, fresh work, conditional downstream stages, estimated work,
+  and explicitly returns zero preview transport.
+- Replaced the basic validator page with a UI-4A profile workspace covering
+  candidate source, population/SV/DA/KD policy controls, lifecycle strip, and
+  preview results.
+- The Start Validation action remains intentionally disabled until UI-4C live
+  run workspace work begins.
+- Validation: focused backend/auth/API suite `12 passed`; backend AST passed;
+  frontend local TypeScript passed; `git diff --check` passed; provider
+  requests: 0.
+- Remaining: visual browser review and dedicated preview API regression tests.
+
+## UI-4A/UI-4B — preview hardening update
+
+- Preview now requires authenticated access and the Validator sends the access
+  token; identity is not accepted from request payload.
+- Added dedicated API regressions for authenticated access, zero provider calls,
+  conditional KD work, and non-mutating preview behavior.
+- Preview tests: `8 passed`; frontend local TypeScript: passed; `git diff
+  --check`: passed; provider requests: 0.
+- Browser visual review remains pending; the UI-4A/B checkpoint is not yet
+  committed or marked fully accepted until that manual review is completed.
+
+## UI-4A/UI-4B — visual hardening review
+
+- Added responsive Validator styles for lifecycle wrapping, preview-card
+  overflow, conditional evidence readability, mobile stacking, and an
+  explicit disabled UI-4C state.
+- Local frontend TypeScript remains passing.
+- Production build was attempted with a 180-second timeout but did not finish
+  and produced no compile error before timeout.
+- Browser viewport review remains pending; UI-4A/B is not yet marked accepted
+  or committed.
+
+## UI-4A/UI-4B — build diagnostic follow-up
+
+- Re-ran `npm run build` with telemetry disabled, trace warnings enabled, and a
+  300-second timeout.
+- The process again produced only the initial Next.js version line and timed
+  out without a compile error. No lingering Node process remained afterward;
+  `.next` contained partially generated manifests/traces.
+- This indicates an environment/build-stall condition, not a proven source
+  compilation failure. Manual browser viewport review remains required before
+  acceptance and commit.
+
+## Phase UI-4 — Rank & Rent readiness audit
+
+- Performed a zero-change audit against the canonical UI/UX roadmap.
+- READY: population/city generation, stored Search Volume evidence, staged
+  SERP/DA/KD pipeline services, configurable validation profiles, reason codes,
+  immutable Run/profile snapshots, recalculation/evidence reuse, history, and
+  CSV exports.
+- PARTIAL: backend run/candidate APIs and validator page exist, but the UI does
+  not yet expose the complete stage-by-stage evidence lineage, preview flow,
+  fail-fast explanation, authenticated requests, manual overrides, or full
+  history experience.
+- MISSING: polished UI-4 Rank & Rent workspace, candidate/run/results screens,
+  stage timeline, profile controls, evidence expansion, and UI-level preview.
+- DEFER UI-5: advanced SERP proxy workspace, rank-preserved organic review,
+  exact-domain Moz reconciliation, manual Moz validation, recall, and
+  false-negative reporting.
+- No code or provider behavior was changed by the audit; external requests: 0.
+
 ## Latest update
 
 - Reconciled the stale status header with the completed Checkpoints Aâ€“F and Provider Readiness history below.
@@ -786,3 +878,54 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Added `backend/app/providers/keyword_metrics.py` with provider-neutral protocol, deterministic mock provider, import-only provider, and transport-disabled Google Ads skeleton.
 - Added disabled-by-default Google Ads configuration flags without enabling transport.
 - No live Google Ads, DataForSEO, Moz, Ahrefs, or SV provider requests were made.
+### Search Volume → Rank & Rent handoff implementation
+
+- Added persisted evidence IDs to Search Volume research responses so UI actions can reference immutable evidence exactly.
+- Added Search Volume handoff controls: configurable 260+ default threshold, R&R Candidate labeling, row selection, qualifying-candidate handoff, SV-only copy, and SV sorting.
+- Handoff remains provider-free (`provider_requests=0`) and preserves the existing validation-profile snapshot contract.
+- Validation: focused backend tests passed; frontend TypeScript and diff checks pending final report.
+- Provider requests: 0.
+
+### UI-4A/B acceptance hardening
+
+- Handoff now checks existing `KeywordMetricValidationHandoff` records by immutable evidence ID before inserting.
+- Repeated handoff requests return `new_count`, `existing_count`, and existing evidence IDs without provider activity.
+- Original handoff/profile/history records remain unchanged.
+### Authentication UX hardening
+
+- Added persistent Account/Sign In navigation and `/account` page.
+- Added authenticated password change with refresh-session revocation.
+- Added admin-only password reset with refresh-session revocation.
+- Improved bootstrap CLI short-password validation without changing idempotent behavior.
+- Provider requests: 0. Focused auth/quota/handoff tests: 7 passed. Frontend TypeScript: passed. Production build not rerun in this checkpoint.
+### Infrastructure freeze — Single-User Development Mode
+
+- Added `NICHEFORGE_SINGLE_USER_MODE` (default `false`) and configurable `NICHEFORGE_SINGLE_USER_EMAIL`.
+- When enabled, the central current-user dependency resolves the configured active owner without interactive login; missing owners fail clearly.
+- User-level quota reservation is bypassed only in this mode; provider access gates, rate limiting, rolling provider budget, telemetry, capacity checks, cache/evidence semantics, and zero-network previews remain active.
+- Authentication, quota, and provider infrastructure is now marked implemented/frozen; next product phase is UI-4C.
+### SINGLE-USER MODE — FRONTEND BYPASS COMPLETE
+
+- Backend is the source of truth through `GET /api/v1/app/capabilities`.
+- Search Volume and Rank & Rent requests attach a bearer token when present and otherwise allow backend policy to decide.
+- With `NICHEFORGE_SINGLE_USER_MODE=true`, the configured owner can use product routes without interactive login; normal mode remains authentication-required.
+- Provider safety remains active; infrastructure is frozen. Do not continue auth/quota refinement unless public deployment or a genuine product blocker requires it.
+
+### Search Volume UI regression recovery and Rank & Rent bridge — implemented, browser review pending
+
+- Compared the current Search Volume page with accepted Git history (`de50d82` and the commercial-insights checkpoint) before restoring UI behavior.
+- Restored keyword import, full summary metrics, CSV export, full-result copy, SV-only copy, SV sorting, mapped/unmapped footer accounting, expandable monthly trend bars, and Commercial Insights with Projected Traffic Value wording.
+- Preserved the configurable 260+ R&R threshold, candidate selection, immutable evidence-ID handoff, duplicate-handoff protection, and zero-network handoff behavior.
+- Added explicit competition colors: low green, medium orange, high red, and unknown/unspecified gray; improved table heading emphasis and trend hover layering.
+- Validation: frontend TypeScript passed; focused backend API/auth/quota/handoff tests passed (15); `git diff --check` passed; provider/network requests: 0.
+- Manual desktop/tablet/mobile browser acceptance and production-build validation remain pending. No commit or push was made.
+
+### Search Volume UI final visual hardening — implementation complete, review pending
+
+- Added exact month/year/searches tooltips to compact and expanded trend bars, including keyboard focus and real zero values.
+- Restored abbreviated month labels, bounded compact trend width, and removed the separate SV sort toolbar button; sorting now lives in the SV header.
+- Improved summary-card wrapping, handoff spacing, success accounting, Rank & Rent destination CTA, table column spacing, shared header hierarchy, and competition colors.
+- Restored structured Commercial Insights with CTR, estimated clicks, and Projected Traffic Value columns.
+- Validation: TypeScript passed; focused backend tests 15 passed; `git diff --check` passed; provider/network requests 0.
+- Browser review still requires manual desktop/tablet/mobile inspection. Production build remains environment-stall/inconclusive. No commit or push was made.
+- Final browser follow-up tightened compact month-label spacing and made the Commercial Insights table fixed-layout/wrapping so headings cannot collide. Existing Export CSV remains visible in the results toolbar; full derived-statistics export scope still requires final CSV inspection.
