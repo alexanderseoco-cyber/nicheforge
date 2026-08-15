@@ -500,6 +500,16 @@ The implementation plan and this status file must remain synchronized. A phase m
 - Compilation was attempted but Python could not replace two locked project `__pycache__` files; no source compilation error was reported.
 - No live Google Ads, DataForSEO, Moz, Ahrefs, or SV provider requests were made.
 
+### Search Volume UI / Commercial Insights update — current
+
+- Commercial Search Value and projected organic metrics are exposed through the API and expandable result rows.
+- Projected Traffic Value is the user-facing label; backend formulas and CTR model remain unchanged.
+- USD-only CPC/bid display is preserved; provider-currency fields are not shown under USD labels.
+- Search Volume UI includes default United States targeting, one Global / Worldwide target, keyword TXT/CSV import with deduplication, result filtering, TSV copy, and CSV export with derived metrics.
+- Commercial Insights position values are rounded for presentation in a Position / CTR / Estimated Clicks / Projected Traffic Value table.
+- Frontend TypeScript and `git diff --check` pass; no provider requests were made.
+- Remaining follow-up: explicit stale-evidence recalculation/backfill and full language capability registry.
+
 ### Keyword Metrics Engine Phase 2 — provider boundary
 
 - Added explicit keyword-metrics provider factory selection for mock, imported, Google Ads, and DataForSEO providers.

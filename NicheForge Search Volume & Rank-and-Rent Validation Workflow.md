@@ -90,7 +90,14 @@ Keyword | Location | SV | 12M Trend | CPC | Competition | Provider
 ```
 
 The trend may be a compact chart or expandable month/value list. Low SV is
-shown, not hidden.
+shown, not hidden. The current workspace also supports a default United States
+target, one semantic `Global / Worldwide` target, TXT/CSV keyword import with
+case-insensitive deduplication, filtered results, TSV copy, and CSV export.
+
+Commercial Insights remain in the expanded row and use the user-facing term
+`Projected Traffic Value` for the modeled `SV × CTR × CPC` estimate. It is an
+advertising-equivalent estimate, not projected revenue. Display values round
+estimated clicks without changing persisted calculations.
 
 The Rank & Rent workflow additionally shows eligibility and reason codes,
 including `BELOW_SV_THRESHOLD`, without changing the stored evidence.
@@ -146,6 +153,17 @@ Using the already persisted Albany, Georgia evidence:
 This workflow does not authorize or imply calls to DataForSEO, Moz, Ahrefs,
 SERP, population, KD, backlink, or validation providers. Google transport is
 disabled by default and requires explicit approval for any live operation.
+
+## Current UI completion notes
+
+- Completed: Commercial Search Value and Projected Traffic Value presentation,
+  rounded click display, default US target, Global / Worldwide alias, keyword
+  import, filtered results, TSV copy, and CSV export.
+- Pending: historical recalculation/backfill for evidence created before the
+  verified currency/FX contract, and expansion of the language capability
+  registry beyond the currently validated language set.
+- Stale provider evidence must not be relabeled in place; recalculation must
+  preserve provider-currency values and use the explicit derived-evidence path.
 
 ## Definition of done
 
