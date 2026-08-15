@@ -7,7 +7,7 @@ from app.db.base import Base
 from app.models.entities import KeywordMetricBatch, ProviderGeoMapping
 from app.models.entities import ProviderCustomerMetadata
 from app.providers.contracts import KeywordMetricResult
-from app.services.keyword_metrics_multi_city import MultiCityKeywordMetricsOrchestrator, StructuredLocation
+from app.services.keyword_metrics_multi_city import MultiCityKeywordMetricsOrchestrator, StructuredLocation, estimate_provider_batches
 
 
 class FakeResolver:
@@ -27,7 +27,9 @@ class FakeProvider:
 
 class FakeFx:
     network_calls = 0
+    calls = 0
     async def get_rate(self, source, target):
+        self.calls += 1
         from app.services.currency_normalization import FxRate
         return FxRate(source, target, 0.01, "2026-01-01", "mock_fx")
 
@@ -37,6 +39,32 @@ class SameTransportFailureResolver:
     async def resolve(self, city, state, country):
         self.calls += 1
         raise RuntimeError("TransportError: provider unavailable")
+
+
+def test_multi_city_batch_estimate_boundaries():
+    assert estimate_provider_batches(1000, 1) == 1
+    assert estimate_provider_batches(1000, 10) == 10
+    assert estimate_provider_batches(1000, 100) == 100
+    assert estimate_provider_batches(15000, 10) == 20
+    assert estimate_provider_batches(10001, 1) == 2
+    assert estimate_provider_batches(1000, 10, language_count=2) == 20
+
+
+def test_scale_plan_for_100000_combinations_is_100_batches_without_transport():
+    combinations = 1000 * 100
+    planned = estimate_provider_batches(1000, 100)
+    assert combinations == 100_000
+    assert planned == 100
+
+
+@pytest.mark.asyncio
+async def test_multi_city_batches_keywords_per_target():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    provider = FakeProvider(); resolver = FakeResolver(); batch = KeywordMetricBatch(provider="google_ads", submitted_count=1000, status="RUNNING"); db.add(batch); db.flush()
+    report = await MultiCityKeywordMetricsOrchestrator(db, provider, resolver).run([f"keyword {i}" for i in range(1000)], [StructuredLocation("Albany", "GA")], batch=batch)
+    assert report["historical_live_requests"] == 1 and provider.calls == 1
+    assert report["historical_successes"] == 1000
 
 
 EXACT_FIFTY_CITIES = [
@@ -97,6 +125,20 @@ async def test_batch_reuses_customer_currency_fx_and_persists_policy():
     evidence = db.query(KeywordMetricEvidence).one(); item = db.query(KeywordMetricBatchItem).one()
     assert evidence.provider_currency_code == "PKR" and evidence.usd_cpc == 1.0 and evidence.monthly_history[0]["searches"] == 0
     assert item.policy_status == "ELIGIBLE_FOR_RANK_RENT_PIPELINE" and result["fx_live_requests"] == 0
+
+
+@pytest.mark.asyncio
+async def test_batch_resolves_fx_once_for_all_results():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    db.add(ProviderCustomerMetadata(provider="google_ads", customer_id="4553815994", currency_code="PKR")); db.flush()
+    provider = FakeProvider(); resolver = FakeResolver(); fx = FakeFx()
+    batch = KeywordMetricBatch(provider="google_ads", submitted_count=10, status="RUNNING"); db.add(batch); db.flush()
+    result = await MultiCityKeywordMetricsOrchestrator(
+        db, provider, resolver, fx_provider=fx, customer_id="4553815994"
+    ).run([f"keyword {i}" for i in range(10)], [StructuredLocation("Albany", "GA")], batch=batch)
+    assert result["historical_successes"] == 10
+    assert fx.calls == 1
 
 
 @pytest.mark.asyncio
