@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import (
     ManualMozObservation, ProxyAuthorityEvidence, ProxyCalibrationObservation,
-    ProxyBacklinkFeatureEvidence, ProviderCache, ProviderCall, Run, RunCandidate, SerpResultRow,
+    ProxyBacklinkFeatureEvidence, ProviderCache, ProviderCall, Run, RunCandidate, RunCandidateProxyAuthorityEvidence, RunCandidateBacklinkEvidence, SerpResultRow,
 )
 from app.providers.contracts import AuthorityTarget, ProxyAuthorityResult
 from app.providers.factory import ahrefs_proxy_provider, dataforseo_backlink_proxy_provider
@@ -18,6 +18,21 @@ from app.services.normalization import root_domain
 
 
 PROXY_UNCALIBRATED = "UNCALIBRATED_HIGH_RECALL"
+
+
+def select_interesting_backlink_rows(rows: Iterable[SerpResultRow], da_by_domain: dict[str, float | None], dr_by_domain: dict[str, float | None], threshold: float = 20.0) -> list[SerpResultRow]:
+    """Conservative Option-C queue: enrich only domains with a weak DA/DR signal."""
+    selected = []
+    seen = set()
+    for row in rows:
+        domain = root_domain(row.url) or row.root_domain
+        if domain in seen:
+            continue
+        seen.add(domain)
+        if ((da_by_domain.get(domain) is not None and da_by_domain[domain] < threshold) or
+                (dr_by_domain.get(domain) is not None and dr_by_domain[domain] < threshold)):
+            selected.append(row)
+    return selected
 
 
 @dataclass(frozen=True)
@@ -61,7 +76,19 @@ async def evaluate_run_candidate_proxy(db: Session, run: Run, rc: RunCandidate,
                                        minimum_weak: int = 4,
                                        ideal_weak: int = 5,
                                        force_refresh: bool = False) -> ProxyDecision:
+    # Ahrefs is domain-level evidence. Deduplicate SERP rows before deciding
+    # which domains need a lookup, while preserving the first SERP row for
+    # run-specific lineage.
     rows = list(rows)
+    unique_rows = []
+    seen_domains = set()
+    for row in rows:
+        domain = root_domain(row.url) or row.root_domain
+        if domain in seen_domains:
+            continue
+        seen_domains.add(domain)
+        unique_rows.append(row)
+    rows = unique_rows
     ratings: list[float | None] = []
     cached_count = 0
     fetched_count = 0
@@ -81,6 +108,15 @@ async def evaluate_run_candidate_proxy(db: Session, run: Run, rc: RunCandidate,
             db.add(ProviderCache(cache_key=key, provider="ahrefs", operation="domain_rating_free", evidence_type="proxy_authority", evidence_id=evidence.id, fetched_at=evidence.fetched_at, fresh_until=evidence.fresh_until))
         db.add(ProviderCall(provider="ahrefs", stage="proxy_authority", operation="domain_rating_free", request_cache_key=key, outcome="success", cache_hit=False, source_kind="ahrefs_api", units=0, started_at=evidence.fetched_at, finished_at=_now(), estimated_cost=0.0, actual_cost=0.0, run_id=run.id, run_candidate_id=rc.id))
         ratings.append(result.domain_rating); fetched_count += 1
+        db.add(RunCandidateProxyAuthorityEvidence(run_candidate_id=rc.id, serp_result_row_id=row.id, proxy_authority_evidence_id=evidence.id, ranking_position=row.position, dr_value_used=evidence.domain_rating))
+    # Cached evidence follows the same immutable SERP-row lineage as freshly fetched evidence.
+    for row in rows:
+        domain = root_domain(row.url) or row.root_domain
+        key = provider_cache_key("ahrefs", "domain_rating", root_domain=domain)
+        cache = db.scalar(select(ProviderCache).where(ProviderCache.cache_key == key))
+        evidence = db.get(ProxyAuthorityEvidence, cache.evidence_id) if cache and cache.evidence_type == "proxy_authority" else None
+        if evidence and not db.scalar(select(RunCandidateProxyAuthorityEvidence).where(RunCandidateProxyAuthorityEvidence.run_candidate_id == rc.id, RunCandidateProxyAuthorityEvidence.serp_result_row_id == row.id)):
+            db.add(RunCandidateProxyAuthorityEvidence(run_candidate_id=rc.id, serp_result_row_id=row.id, proxy_authority_evidence_id=evidence.id, ranking_position=row.position, dr_value_used=evidence.domain_rating))
     decision = evaluate_proxy(ratings, threshold, minimum_weak, ideal_weak)
     result = dict(decision.evidence, targets_available=len(rows), targets_evaluated=len(rows), cache_hits=cached_count, network_lookups=fetched_count, unchecked_targets=0, decision=decision.classification, reason=decision.reason, uncertainty=decision.uncertainty, recommended_action=decision.recommended_action, why_not_rejected=decision.why_not_rejected)
     rc.proxy_classification = decision.classification
@@ -143,5 +179,10 @@ async def enrich_backlink_features(db: Session, run: Run, rc: RunCandidate,
         mapping_failed = any(getattr(result, "mapping_status", "mapped") != "mapped" for result in results)
         db.add(ProviderCall(provider="dataforseo", stage="proxy_authority_enrichment", operation=provider.operation, request_cache_key=provider_cache_key("dataforseo", "proxy_backlink_batch", targets=sorted(cache_keys)), outcome="mapping_failure" if mapping_failed else "success", cache_hit=False, source_kind="dataforseo_backlinks", units=None, started_at=batch_fetched, finished_at=_now(), estimated_cost=provider.estimated_cost, actual_cost=actual_cost, run_id=run.id, run_candidate_id=rc.id, error_category="mapping" if mapping_failed else None, error_message="One or more target results lacked documented core backlink fields" if mapping_failed else None))
     run.proxy_configuration_snapshot = {**(run.proxy_configuration_snapshot or {}), "feature_sources": ["ahrefs.domain_rating", "dataforseo.backlink_summary"], "feature_set_version": "ahrefs_dr_v1+dataforseo_backlink_v1", "reject_audit_percent": run.proxy_reject_audit_percent or 0.0}
+    db.commit()
+    for domain, evidence in evidence_by_domain.items():
+        row = unique[domain]
+        if not db.scalar(select(RunCandidateBacklinkEvidence).where(RunCandidateBacklinkEvidence.run_candidate_id == rc.id, RunCandidateBacklinkEvidence.serp_result_row_id == row.id)):
+            db.add(RunCandidateBacklinkEvidence(run_candidate_id=rc.id, serp_result_row_id=row.id, proxy_backlink_evidence_id=evidence.id, ranking_position=row.position))
     db.commit()
     return [evidence_by_domain[domain] for domain in unique]
