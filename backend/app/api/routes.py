@@ -1,14 +1,17 @@
 import logging
+import re
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from datetime import datetime
 
 from app.db.session import get_db
-from app.models.entities import ImportBatch, Project, City, Candidate, Run, RunCandidate
-from app.schemas.domain import (ProjectCreate, CandidateGenerateRequest, CandidateOut, RunRequest, RunCreate, RunOut, ValidationProfile, OverlayRequest, KeywordMetricsRequest, KeywordMetricsPreview, KeywordMetricsResearchResponse, KeywordMetricResultOut, KeywordMetricsHandoffRequest, KeywordMetricsHandoffResponse, KeywordMetricsBatchRequest, KeywordMetricsHandoffOut)
+from app.models.entities import ImportBatch, Project, City, Candidate, Run, RunCandidate, CandidateEntity, ProjectCandidate, SerpSnapshot, SerpResultRow, RunCandidateAuthorityEvidence, RunCandidateProxyAuthorityEvidence, RunCandidateBacklinkEvidence, AuthorityEvidence, ProxyAuthorityEvidence, ProxyBacklinkFeatureEvidence, KeywordMetricEvidence, SearchVolumeEvidence
+from app.schemas.domain import (ProjectCreate, ProjectHandoffAttachRequest, ProjectHandoffAttachResponse, CandidateGenerateRequest, CandidateOut, RunRequest, RunCreate, RunOut, ValidationProfile, OverlayRequest, KeywordMetricsRequest, KeywordMetricsPreview, KeywordMetricsResearchResponse, KeywordMetricResultOut, KeywordMetricsHandoffRequest, KeywordMetricsHandoffResponse, KeywordMetricsBatchRequest, KeywordMetricsHandoffOut)
 from app.services.normalization import normalize_keyword, build_keyword
+from app.services.identity import canonical_identity, identity_key
+from app.services.validation_scope import GENERAL_SCOPE, LOCAL_SCOPE, resolve_scope
 from app.services.gates import population_gate
 from app.services.pipeline import process_candidate
 from app.providers.factory import authority_provider
@@ -257,7 +260,10 @@ def get_rank_rent_handoff(handoff_id: str, db: Session = Depends(get_db)):
 
 def _handoff_out(row: KeywordMetricValidationHandoff, db: Session):
     evidence = db.get(KeywordMetricEvidence, row.evidence_id)
-    return KeywordMetricsHandoffOut(handoff_id=row.id, evidence_id=row.evidence_id, keyword=row.submitted_keyword, search_volume=evidence.avg_monthly_searches if evidence else None, country_code=row.country_code, location_target=row.location_target or {}, language_code=row.language_code, provider=row.provider, provider_keyword=row.provider_keyword, validation_profile=row.validation_profile_snapshot or {}, created_at=row.created_at, status="PENDING")
+    embedded = _local_city_matches(db, row.submitted_keyword)
+    scope = resolve_scope(location_target=row.location_target, has_local_city_match=bool(embedded))
+    needs_location = scope.scope == LOCAL_SCOPE and not (row.location_target or {}).get("city") and len(embedded) != 1
+    return KeywordMetricsHandoffOut(handoff_id=row.id, evidence_id=row.evidence_id, keyword=row.submitted_keyword, search_volume=evidence.avg_monthly_searches if evidence else None, country_code=row.country_code, location_target=row.location_target or {}, language_code=row.language_code, provider=row.provider, provider_keyword=row.provider_keyword, validation_profile=row.validation_profile_snapshot or {}, created_at=row.created_at, status="PENDING", validation_scope=scope.scope, scope_reason=scope.reason, location_status="NEEDS_CONFIRMATION" if needs_location else ("NOT_REQUIRED" if scope.scope == GENERAL_SCOPE else "RESOLVED"), population_applicability="NOT_APPLICABLE" if scope.scope == GENERAL_SCOPE else "APPLICABLE", serp_mode="NATIONAL" if scope.scope == GENERAL_SCOPE else "LOCALIZED", readiness_status="NEEDS_LOCATION" if needs_location else "CLASSIFIED")
 
 
 @router.post("/runs/{run_id}/proxy-authority")
@@ -350,11 +356,155 @@ def import_batch_errors(import_batch_id: str, db: Session = Depends(get_db)):
     return {"import_batch_id": batch.id, "errors": batch.error_summary or {}}
 
 
+def _local_city_matches(db: Session, keyword: str):
+    normalized_keyword = normalize_keyword(keyword)
+    cache = db.info.setdefault("city_match_cache", {})
+    if normalized_keyword in cache:
+        return cache[normalized_keyword]
+    tokens = [token for token in normalized_keyword.split() if len(token) >= 3]
+    candidate_rows = db.scalars(select(City).where(or_(*[City.name.ilike(f"%{token}%") for token in tokens]))).all() if tokens else []
+    cities = candidate_rows
+    with_state = [city for city in cities
+                  if re.search(rf"\b{re.escape(normalize_keyword(city.name))}\b", normalized_keyword)
+                  and re.search(rf"\b{re.escape(city.state_code.casefold())}\b", normalized_keyword)]
+    result = with_state or [city for city in cities if re.search(rf"\b{re.escape(normalize_keyword(city.name))}\b", normalized_keyword)]
+    cache[normalized_keyword] = result
+    return result
+
+
+def _attach_handoffs(db: Session, project: Project, handoff_ids: list[str], location_overrides: dict[str, dict] | None = None):
+    created = 0; existing = 0; ids = []
+    ambiguities = []
+    location_overrides = location_overrides or {}
+    for handoff_id in handoff_ids:
+        handoff = db.get(KeywordMetricValidationHandoff, handoff_id)
+        if not handoff:
+            raise HTTPException(404, "Search Volume handoff not found")
+        evidence = db.get(KeywordMetricEvidence, handoff.evidence_id)
+        target = {**(handoff.location_target or {}), **location_overrides.get(handoff_id, {})}
+        city_name = target.get("city") or target.get("city_name")
+        state_code = target.get("state_code") or target.get("state")
+        embedded = _local_city_matches(db, handoff.submitted_keyword)
+        scope = resolve_scope(location_target=target, has_local_city_match=bool(embedded))
+        if scope.scope == GENERAL_SCOPE:
+            geographic_id = target.get("country_code") or handoff.country_code or "US"
+            canonical = canonical_identity(handoff.submitted_keyword, str(geographic_id), handoff.language_code, handoff.country_code)
+            entity = db.scalar(select(CandidateEntity).where(CandidateEntity.identity_key == identity_key(canonical)))
+            if not entity:
+                entity = CandidateEntity(canonical_identity=canonical, identity_key=identity_key(canonical), service_term_normalized=normalize_keyword(handoff.submitted_keyword), city_id=None, validation_scope=GENERAL_SCOPE, language_code=handoff.language_code, country_code=handoff.country_code, canonical_keyword=handoff.submitted_keyword)
+                db.add(entity); db.flush()
+            candidate = db.scalar(select(ProjectCandidate).where(ProjectCandidate.project_id == project.id, ProjectCandidate.candidate_entity_id == entity.id))
+            if candidate and candidate.search_volume_evidence_id and candidate.search_volume_evidence_id != handoff.evidence_id:
+                raise HTTPException(409, "PROJECT_CANDIDATE_EVIDENCE_CONFLICT")
+            if not candidate:
+                candidate = ProjectCandidate(project_id=project.id, candidate_entity_id=entity.id, validation_scope=GENERAL_SCOPE, scope_reason=scope.reason, search_volume_evidence_id=handoff.evidence_id, original_input=handoff.submitted_keyword, display_keyword=handoff.submitted_keyword, current_status="IMPORTED", current_reason_codes=["SEARCH_VOLUME_HANDOFF", "GENERAL_NICHE"], broad_category="General niche")
+                db.add(candidate); db.flush(); created += 1
+            else:
+                candidate.validation_scope = GENERAL_SCOPE
+                candidate.scope_reason = scope.reason
+                if candidate.search_volume_evidence_id is None: candidate.search_volume_evidence_id = handoff.evidence_id
+                existing += 1
+            ids.append(candidate.id)
+            continue
+        if not city_name or not state_code:
+            # Country-targeted Search Volume research can still contain an
+            # explicitly localized keyword. Reuse the local population
+            # registry only when the embedded city is unambiguous; never
+            # guess a state or call a provider during handoff.
+            if len(embedded) == 1:
+                city_name = embedded[0].name
+                state_code = embedded[0].state_code
+            elif len(embedded) > 1:
+                ambiguities.append({"handoff_id": handoff.id, "keyword": handoff.submitted_keyword, "candidates": [{"city": city.name, "state": city.state_code, "city_id": city.id} for city in embedded]})
+                continue
+        if not city_name or not state_code:
+            possible = _local_city_matches(db, handoff.submitted_keyword)
+            if possible:
+                raise HTTPException(422, {"code": "HANDOFF_CITY_AMBIGUOUS", "message": "Location needs confirmation before Rank & Rent validation.", "ambiguities": [{"handoff_id": handoff.id, "keyword": handoff.submitted_keyword, "candidates": [{"city": c.name, "state": c.state_code, "city_id": c.id} for c in possible]}], "candidates": [{"city": c.name, "state": c.state_code, "city_id": c.id} for c in possible]})
+            raise HTTPException(422, {"code": "HANDOFF_CITY_UNRESOLVED", "message": "Location needs confirmation before Rank & Rent validation.", "keyword": handoff.submitted_keyword, "candidates": []})
+        city = db.scalar(select(City).where(City.name.ilike(city_name), City.state_code == state_code.upper()))
+        if not city:
+            raise HTTPException(422, {"code": "HANDOFF_CITY_UNRESOLVED", "message": "The selected city is not available in the local population registry.", "keyword": handoff.submitted_keyword, "candidates": []})
+        geographic_id = str((target.get("geo_target_ids") or [f"{city.name},{city.state_code}"])[0])
+        canonical = canonical_identity(handoff.submitted_keyword, geographic_id, handoff.language_code, handoff.country_code)
+        entity = db.scalar(select(CandidateEntity).where(CandidateEntity.identity_key == identity_key(canonical)))
+        if not entity:
+            entity = CandidateEntity(canonical_identity=canonical, identity_key=identity_key(canonical), service_term_normalized=normalize_keyword(handoff.submitted_keyword), city_id=city.id, validation_scope=LOCAL_SCOPE, language_code=handoff.language_code, country_code=handoff.country_code, canonical_keyword=handoff.submitted_keyword)
+            db.add(entity); db.flush()
+        candidate = db.scalar(select(ProjectCandidate).where(ProjectCandidate.project_id == project.id, ProjectCandidate.candidate_entity_id == entity.id))
+        if candidate and candidate.search_volume_evidence_id and candidate.search_volume_evidence_id != handoff.evidence_id:
+            raise HTTPException(409, "PROJECT_CANDIDATE_EVIDENCE_CONFLICT")
+        if not candidate:
+            candidate = ProjectCandidate(project_id=project.id, candidate_entity_id=entity.id, validation_scope=LOCAL_SCOPE, scope_reason=scope.reason, search_volume_evidence_id=handoff.evidence_id, original_input=handoff.submitted_keyword, display_keyword=handoff.submitted_keyword, current_status="IMPORTED", current_reason_codes=["SEARCH_VOLUME_HANDOFF"], broad_category="Search Volume handoff")
+            db.add(candidate); db.flush(); created += 1
+        else:
+            if candidate.search_volume_evidence_id is None: candidate.search_volume_evidence_id = handoff.evidence_id
+            existing += 1
+        ids.append(candidate.id)
+    if ambiguities:
+        raise HTTPException(409, {"code": "HANDOFF_CITY_AMBIGUOUS", "message": "One or more locations need confirmation before Rank & Rent validation.", "ambiguities": ambiguities, "candidates": ambiguities[0]["candidates"] if len(ambiguities) == 1 else []})
+    return created, existing, ids
+
+
+@router.post("/projects/{project_id}/handoffs/attach", response_model=ProjectHandoffAttachResponse)
+def attach_project_handoffs(project_id: str, payload: ProjectHandoffAttachRequest, db: Session = Depends(get_db)):
+    project = db.get(Project, project_id)
+    if not project: raise HTTPException(404, "Project not found")
+    pending = []
+    ready_ids = []
+    for handoff_id in dict.fromkeys(payload.handoff_ids):
+        handoff = db.get(KeywordMetricValidationHandoff, handoff_id)
+        if not handoff: raise HTTPException(404, "Search Volume handoff not found")
+        target = {**(handoff.location_target or {}), **payload.location_overrides.get(handoff_id, {})}
+        embedded = _local_city_matches(db, handoff.submitted_keyword)
+        scope = resolve_scope(location_target=target, has_local_city_match=bool(embedded))
+        if scope.scope == LOCAL_SCOPE and not (target.get("city") or target.get("city_name") or target.get("state_code") or target.get("state")) and len(embedded) != 1:
+            if embedded:
+                pending.append({"handoff_id": handoff.id, "status": "LOCAL_LOCATION_REQUIRED", "validation_scope": LOCAL_SCOPE, "keyword": handoff.submitted_keyword, "city_candidates": [{"city": c.name, "state": c.state_code, "city_id": c.id} for c in embedded]})
+                continue
+        ready_ids.append(handoff_id)
+    created, existing, ids = _attach_handoffs(db, project, ready_ids, payload.location_overrides) if ready_ids else (0, 0, [])
+    db.commit()
+    ready_results = [{"handoff_id": h.id, "status": "GENERAL_READY" if db.get(ProjectCandidate, cid).validation_scope == GENERAL_SCOPE else "LOCAL_READY", "validation_scope": db.get(ProjectCandidate, cid).validation_scope, "project_candidate_id": cid, "keyword": db.get(ProjectCandidate, cid).display_keyword} for h, cid in zip([db.get(KeywordMetricValidationHandoff, hid) for hid in ready_ids], ids)]
+    results = pending + ready_results
+    return ProjectHandoffAttachResponse(project_id=project_id, created_count=created, existing_count=existing, project_candidate_ids=ids, results=results, summary={"total": len(results), "ready": len(ready_results), "needs_location": len(pending), "failed": 0})
+
+
 @router.post("/projects")
 def create_project(payload: ProjectCreate, db: Session = Depends(get_db)):
     p = Project(name=payload.name, description=payload.description, profile_snapshot=payload.profile.model_dump())
-    db.add(p); db.commit(); db.refresh(p)
-    return {"id": p.id, "name": p.name, "profile": p.profile_snapshot}
+    db.add(p); db.flush()
+    candidate_ids = []
+    for handoff_id in payload.handoff_ids:
+        handoff = db.get(KeywordMetricValidationHandoff, handoff_id)
+        if not handoff:
+            raise HTTPException(404, "Search Volume handoff not found")
+        evidence = db.get(KeywordMetricEvidence, handoff.evidence_id)
+        target = handoff.location_target or {}
+        city_name = target.get("city") or target.get("city_name")
+        state_code = target.get("state_code") or target.get("state")
+        if not city_name or not state_code:
+            raise HTTPException(422, "Rank & Rent candidates require a city-targeted Search Volume handoff")
+        city = db.scalar(select(City).where(City.name.ilike(city_name), City.state_code == state_code.upper()))
+        if not city:
+            raise HTTPException(422, "The handoff city is not available in the local population registry")
+        geographic_id = str((target.get("geo_target_ids") or [f"{city.name},{city.state_code}"])[0])
+        canonical = canonical_identity(handoff.submitted_keyword, geographic_id, handoff.language_code, handoff.country_code)
+        entity = db.scalar(select(CandidateEntity).where(CandidateEntity.identity_key == identity_key(canonical)))
+        if not entity:
+            entity = CandidateEntity(canonical_identity=canonical, identity_key=identity_key(canonical), service_term_normalized=normalize_keyword(handoff.submitted_keyword), city_id=city.id, language_code=handoff.language_code, country_code=handoff.country_code, canonical_keyword=handoff.submitted_keyword)
+            db.add(entity); db.flush()
+        candidate = db.scalar(select(ProjectCandidate).where(ProjectCandidate.project_id == p.id, ProjectCandidate.candidate_entity_id == entity.id))
+        if candidate and candidate.search_volume_evidence_id and candidate.search_volume_evidence_id != handoff.evidence_id:
+            raise HTTPException(409, "Project candidate already references different Search Volume evidence")
+        if not candidate:
+            candidate = ProjectCandidate(project_id=p.id, candidate_entity_id=entity.id, search_volume_evidence_id=handoff.evidence_id, original_input=handoff.submitted_keyword, display_keyword=handoff.submitted_keyword, current_status="IMPORTED", current_reason_codes=["SEARCH_VOLUME_HANDOFF"], broad_category="Search Volume handoff")
+            db.add(candidate); db.flush()
+        elif candidate.search_volume_evidence_id is None:
+            candidate.search_volume_evidence_id = handoff.evidence_id
+        candidate_ids.append(candidate.id)
+    db.commit(); db.refresh(p)
+    return {"id": p.id, "name": p.name, "profile": p.profile_snapshot, "candidate_ids": candidate_ids, "candidate_count": len(candidate_ids)}
 
 
 @router.post("/cities")
@@ -437,16 +587,65 @@ def create_run(project_id: str, payload: RunCreate, db: Session = Depends(get_db
     if not project:
         raise HTTPException(404, "Project not found")
     profile = payload.profile or ValidationProfile(**project.profile_snapshot)
+    selected_ids = payload.candidate_ids
+    if selected_ids is None:
+        selected_ids = [pc.id for pc in db.scalars(select(ProjectCandidate).where(ProjectCandidate.project_id == project_id)).all()]
+    valid_ids = {pc.id for pc in db.scalars(select(ProjectCandidate).where(ProjectCandidate.project_id == project_id, ProjectCandidate.id.in_(selected_ids))).all()}
+    if set(selected_ids) != valid_ids:
+        raise HTTPException(422, "One or more selected candidates do not belong to this project")
+    configuration = profile.model_dump()
+    configuration["selected_project_candidate_ids"] = list(dict.fromkeys(selected_ids))
     run = Run(project_id=project_id, min_population=profile.min_population, max_population=profile.max_population,
               min_search_volume=profile.min_search_volume, da_threshold=profile.da_threshold,
               required_low_da_count=profile.minimum_weak_domains, minimum_weak_domains=profile.minimum_weak_domains,
               ideal_weak_domains=profile.ideal_weak_domains, authority_evaluation_mode=profile.authority_evaluation_mode,
               authority_batch_size=profile.authority_batch_size, adaptive_seek_ideal=profile.adaptive_seek_ideal, organic_depth=profile.organic_depth,
               kd_enabled=profile.kd_enabled, kd_provider=profile.kd_provider, kd_threshold=profile.kd_threshold, kd_operator=profile.kd_operator, kd_mode=profile.kd_mode,
-              country_code="US", language_code="en", configuration_snapshot=profile.model_dump(),
+              country_code="US", language_code="en", configuration_snapshot=configuration,
               provider_snapshot={}, freshness_policy_snapshot={}, enabled_gates={"population": True, "search_volume": True, "authority": True})
     db.add(run); db.commit(); db.refresh(run)
     return run
+
+
+def _run_response(db: Session, run: Run):
+    rows = db.scalars(select(RunCandidate).where(RunCandidate.run_id == run.id)).all()
+    terminal = {"PASS", "PRIMARY_REJECTED", "SV_REJECTED", "POPULATION_REJECTED", "ERROR_RETRYABLE", "ERROR_TERMINAL"}
+    processed = sum(1 for row in rows if row.finished_at or row.status in terminal)
+    progress = 100 if run.status == "COMPLETED" else (round(processed / len(rows) * 100) if rows else 0)
+    results = []
+    for row in rows:
+        pc = db.get(ProjectCandidate, row.project_candidate_id)
+        # Canonical handoff evidence lives on RunCandidate; retain legacy
+        # fallbacks for historical rows.
+        if row.keyword_metric_evidence_id:
+            sv = db.get(KeywordMetricEvidence, row.keyword_metric_evidence_id)
+        elif pc and pc.search_volume_evidence_id:
+            sv = db.get(KeywordMetricEvidence, pc.search_volume_evidence_id)
+        elif row.search_volume_evidence_id:
+            sv = db.get(SearchVolumeEvidence, row.search_volume_evidence_id)
+        else:
+            sv = None
+        # The status projection below is legacy-field based; mirror the
+        # selected canonical evidence in memory so handoff runs are reported
+        # as PASS without changing persisted lineage.
+        if sv and not row.search_volume_evidence_id:
+            row.search_volume_evidence_id = sv.id
+        snap = db.get(SerpSnapshot, row.serp_snapshot_id) if row.serp_snapshot_id else None
+        serp_rows = db.scalars(select(SerpResultRow).where(SerpResultRow.snapshot_id == snap.id).order_by(SerpResultRow.position)).all() if snap else []
+        authority = []
+        da_links = {link.serp_result_row_id: link for link in db.scalars(select(RunCandidateAuthorityEvidence).where(RunCandidateAuthorityEvidence.run_candidate_id == row.id)).all()}
+        for result in serp_rows:
+            link = da_links.get(result.id)
+            ev = db.get(AuthorityEvidence, link.authority_evidence_id) if link else None
+            proxy_link = db.scalar(select(RunCandidateProxyAuthorityEvidence).where(RunCandidateProxyAuthorityEvidence.run_candidate_id == row.id, RunCandidateProxyAuthorityEvidence.serp_result_row_id == result.id))
+            proxy = db.get(ProxyAuthorityEvidence, proxy_link.proxy_authority_evidence_id) if proxy_link else None
+            backlink_link = db.scalar(select(RunCandidateBacklinkEvidence).where(RunCandidateBacklinkEvidence.run_candidate_id == row.id, RunCandidateBacklinkEvidence.serp_result_row_id == result.id))
+            backlink = db.get(ProxyBacklinkFeatureEvidence, backlink_link.proxy_backlink_evidence_id) if backlink_link else None
+            authority.append({"position": result.position, "domain": result.root_domain, "url": result.url, "da": link.da_value_used if link else None, "pa": ev.pa if ev else None, "provider": ev.provider if ev else None, "ahrefs_dr": proxy.domain_rating if proxy else None, "da_provider": ev.provider if ev else None, "dr_provider": proxy.provider if proxy else None, "referring_domains": backlink.referring_domains if backlink else None, "referring_main_domains": backlink.referring_main_domains if backlink else None, "referring_ips": backlink.referring_ips if backlink else None, "referring_subnets": backlink.referring_subnets if backlink else None, "backlinks": backlink.backlinks if backlink else None, "backlinks_spam_score": backlink.backlinks_spam_score if backlink else None, "backlink_provider": backlink.provider if backlink else None})
+        serp_reason = "SERP_PROVIDER_REQUEST_ERROR" if "SERP_PROVIDER_REQUEST_ERROR" in (row.reason_codes or []) else ("SERP_INSUFFICIENT_ORGANIC_RESULTS" if "SERP_INSUFFICIENT_ORGANIC_RESULTS" in (row.reason_codes or []) else None)
+        serp_status = "RETRYABLE" if serp_reason else ("PASS" if row.serp_snapshot_id and row.status not in {"ERROR_RETRYABLE"} else "NOT RUN")
+        results.append({"run_candidate_id": row.id, "project_candidate_id": row.project_candidate_id, "keyword": pc.display_keyword if pc else None, "validation_scope": row.validation_scope or (pc.validation_scope if pc else "LOCAL_RANK_RENT"), "population_applicability": "NOT_APPLICABLE" if row.validation_scope == "GENERAL_NICHE" else ("PASS" if row.population_evidence_id and row.status != "POPULATION_REJECTED" else ("REJECTED" if row.status == "POPULATION_REJECTED" else "NOT RUN")), "serp_mode": "NATIONAL" if row.validation_scope == "GENERAL_NICHE" else "LOCAL_CITY", "status": row.status, "reason_codes": row.reason_codes or [], "population": "NOT APPLICABLE" if row.validation_scope == "GENERAL_NICHE" else ("PASS" if row.population_evidence_id and row.status != "POPULATION_REJECTED" else ("REJECTED" if row.status == "POPULATION_REJECTED" else "NOT RUN")), "search_volume": "PASS" if row.search_volume_evidence_id and row.status not in {"SV_REJECTED", "POPULATION_REJECTED"} else ("REJECTED" if row.status == "SV_REJECTED" else "NOT RUN"), "search_volume_value": sv.avg_monthly_searches if sv else None, "search_volume_provider": sv.provider if sv else None, "serp": serp_status, "serp_reason": serp_reason, "serp_count": len(serp_rows), "serp_required": run.organic_depth, "serp_evidence": [{"position": item.position, "domain": item.root_domain, "url": item.url, "title": item.title} for item in serp_rows], "authority_opportunity": row.opportunity_classification if row.validation_scope == "GENERAL_NICHE" else None, "authority_opportunity_reason": row.authority_opportunity_reason, "weak_site_count": row.low_da_count, "authority_threshold": row.da_threshold_used, "da": "NOT RUN" if row.authority_results_available is None else ("PASS" if row.primary_gate_passed else "REJECTED"), "da_evidence": authority, "deep_analysis": "NOT RUN" if row.authority_results_available is None else ("NOT RUN" if row.validation_scope == "GENERAL_NICHE" and row.opportunity_classification is None else ("PASS" if row.opportunity_classification in {"PASS", "IDEAL", "STRONG_POTENTIAL", "GOOD_POTENTIAL", "POTENTIAL_NICHE"} else "FAIL")), "kd": "NOT RUN" if row.kd_status in (None, "MISSING") else row.kd_status, "final_result": "NOT PRODUCED" if row.status == "ERROR_RETRYABLE" else row.status})
+    return {**{column.name: getattr(run, column.name) for column in Run.__table__.columns}, "progress": progress, "candidate_results": results}
 
 
 @router.get("/runs/{run_id}", response_model=RunOut)
@@ -454,14 +653,17 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
     run = db.get(Run, run_id)
     if not run:
         raise HTTPException(404, "Run not found")
-    return run
+    return _run_response(db, run)
 
 
 @router.post("/runs/{run_id}/execute", response_model=RunOut)
 async def execute_run_endpoint(run_id: str, payload: RunCreate | None = None, db: Session = Depends(get_db)):
-    ids = payload.candidate_ids if payload else None
+    run = db.get(Run, run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    ids = payload.candidate_ids if payload and payload.candidate_ids is not None else (run.configuration_snapshot or {}).get("selected_project_candidate_ids")
     try:
-        return await execute_run(db, run_id, ids)
+        return _run_response(db, await execute_run(db, run_id, ids))
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
 
