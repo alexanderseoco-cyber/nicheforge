@@ -8,7 +8,7 @@ from app.models.entities import City, Project, CandidateEntity, ProjectCandidate
 from app.providers.contracts import AuthorityTarget
 from app.providers.dataforseo_backlinks import DataForSEOBacklinkSummaryProvider
 from app.services.identity import canonical_identity, identity_key
-from app.services.proxy_authority import enrich_backlink_features
+from app.services.proxy_authority import enrich_backlink_features, select_interesting_backlink_rows
 from app.services.calibration_selector import select_calibration_sample, select_round2_calibration_sample
 from app.services.calibration_consolidation import import_ahrefs_evidence
 
@@ -145,3 +145,10 @@ def test_backlink_features_are_separate_and_cacheable(monkeypatch):
         assert second[0].provider == "dataforseo" and second[0].rank == 99
         assert db.query(ProviderCall).filter_by(provider="dataforseo").count() == 2
         assert db.query(ProxyBacklinkFeatureEvidence).count() == 2
+
+
+def test_backlink_enrichment_queue_selects_only_weak_domains_without_network():
+    domains = ["foo.com", "bar.net", "baz.org"]
+    rows = [SerpResultRow(snapshot_id="s", position=i, url=f"https://{domain}/", root_domain=domain) for i, domain in enumerate(domains, 1)]
+    selected = select_interesting_backlink_rows(rows, {"foo.com": 8, "bar.net": 45, "baz.org": None}, {"foo.com": 40, "bar.net": 10, "baz.org": None})
+    assert [row.root_domain for row in selected] == ["foo.com", "bar.net"]

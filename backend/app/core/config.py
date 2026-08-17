@@ -1,9 +1,30 @@
 from functools import lru_cache
+from pathlib import Path
+from urllib.parse import unquote, urlsplit, urlunsplit
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def resolve_database_url(value: str) -> str:
+    """Resolve relative SQLite paths from the repository root, never cwd."""
+    if not value.lower().startswith("sqlite:"):
+        return value
+    prefix = "sqlite:///"
+    raw = unquote(value[len(prefix):]) if value.startswith(prefix) else value
+    if raw in {":memory:", ""}:
+        return value
+    path = Path(raw)
+    if not path.is_absolute():
+        # Development configurations historically used either ./nicheforge.db
+        # or ../nicheforge.db. Both designate the canonical root DB.
+        path = PROJECT_ROOT / path.name
+    return prefix + path.resolve().as_posix()
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file="../.env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=PROJECT_ROOT / ".env", extra="ignore")
 
     nicheforge_env: str = "development"
     nicheforge_database_url: str = "sqlite:///./nicheforge.db"
@@ -61,8 +82,12 @@ class Settings(BaseSettings):
     keyword_metrics_budget: float | None = None
     keyword_metrics_freshness_days: int = 30
     user_google_ads_daily_allowance: int = 0
+    nicheforge_single_user_mode: bool = False
+    nicheforge_single_user_email: str | None = None
 
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    settings.nicheforge_database_url = resolve_database_url(settings.nicheforge_database_url)
+    return settings

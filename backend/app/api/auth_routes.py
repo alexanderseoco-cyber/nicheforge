@@ -27,10 +27,16 @@ class UserUpdateRequest(BaseModel):
     status: str | None = None
     email: str | None = None
     display_name: str | None = None
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=12)
+class AdminResetPasswordRequest(BaseModel):
+    new_password: str = Field(min_length=12)
 
 def _settings():
     s = get_settings()
-    if not s.auth_secret: raise HTTPException(503, "Authentication is not configured")
+    if not s.auth_secret and not getattr(s, "nicheforge_single_user_mode", False):
+        raise HTTPException(503, "Authentication is not configured")
     return s
 def _safe_user(user: User) -> dict:
     return {"id": user.id, "email": user.email, "display_name": user.display_name, "role": user.role, "status": user.status, "created_at": user.created_at, "last_login_at": user.last_login_at}
@@ -60,6 +66,14 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
 
 def get_current_user(authorization: str | None = Header(default=None), db: Session = Depends(get_db)) -> User:
     s = _settings()
+    if getattr(s, "nicheforge_single_user_mode", False):
+        if not getattr(s, "nicheforge_single_user_email", None): raise HTTPException(503, "Single-user mode requires NICHEFORGE_SINGLE_USER_EMAIL")
+        try: email = normalize_email(s.nicheforge_single_user_email)
+        except ValueError as exc: raise HTTPException(503, "Configured single-user owner email is invalid") from exc
+        user = db.query(User).filter_by(email=email).first()
+        if not user: raise HTTPException(503, "Configured single-user owner does not exist; bootstrap the owner account first")
+        if user.status != "ACTIVE": raise HTTPException(403, "Account is disabled")
+        return user
     if not authorization or not authorization.lower().startswith("bearer "): raise HTTPException(401, "Authentication required")
     try: payload = decode_access_token(authorization.split(" ", 1)[1], s.auth_secret)
     except ValueError: raise HTTPException(401, "Authentication required")
@@ -76,6 +90,13 @@ def logout(payload: RefreshRequest, db: Session = Depends(get_db)):
     return {"status": "logged_out"}
 @router.get("/auth/me")
 def me(user: User = Depends(get_current_user)): return _safe_user(user)
+@router.post("/auth/change-password")
+def change_password(payload: ChangePasswordRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not verify_password(payload.current_password, user.password_hash): raise HTTPException(401, "Current password is incorrect")
+    user.password_hash = hash_password(payload.new_password); user.updated_at = datetime.utcnow()
+    db.query(UserSession).filter_by(user_id=user.id).update({UserSession.revoked_at: datetime.utcnow()})
+    db.commit()
+    return {"status": "password_changed", "requires_login": True}
 @router.get("/admin/users")
 def list_users(_: User = Depends(require_admin), db: Session = Depends(get_db)): return [_safe_user(user) for user in db.query(User).order_by(User.created_at).all()]
 @router.post("/admin/users")
@@ -85,6 +106,14 @@ def create_user(payload: UserCreateRequest, _: User = Depends(require_admin), db
     if payload.role not in {"ADMIN", "USER"}: raise HTTPException(422, "Invalid role")
     if db.query(User).filter_by(email=email).first(): raise HTTPException(409, "Email already exists")
     user = User(email=email, display_name=payload.display_name, password_hash=hash_password(payload.password), role=payload.role, status="ACTIVE"); db.add(user); db.commit(); db.refresh(user); return _safe_user(user)
+@router.post("/admin/users/{user_id}/reset-password")
+def reset_password(user_id: str, payload: AdminResetPasswordRequest, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    user = db.get(User, user_id)
+    if not user: raise HTTPException(404, "User not found")
+    user.password_hash = hash_password(payload.new_password); user.updated_at = datetime.utcnow()
+    db.query(UserSession).filter_by(user_id=user.id).update({UserSession.revoked_at: datetime.utcnow()})
+    db.commit()
+    return {"status": "password_reset", "user_id": user.id, "requires_login": True}
 @router.get("/admin/users/{user_id}")
 def get_user(user_id: str, _: User = Depends(require_admin), db: Session = Depends(get_db)):
     user = db.get(User, user_id)

@@ -27,6 +27,19 @@ class ProjectCreate(BaseModel):
     name: str
     description: str | None = None
     profile: ValidationProfile = Field(default_factory=ValidationProfile)
+    handoff_ids: list[str] = Field(default_factory=list)
+
+class ProjectHandoffAttachRequest(BaseModel):
+    handoff_ids: list[str] = Field(min_length=1)
+    location_overrides: dict[str, dict] = Field(default_factory=dict)
+
+class ProjectHandoffAttachResponse(BaseModel):
+    project_id: str
+    created_count: int
+    existing_count: int
+    project_candidate_ids: list[str]
+    results: list[dict] = Field(default_factory=list)
+    summary: dict = Field(default_factory=dict)
 
 
 class NicheInput(BaseModel):
@@ -77,6 +90,8 @@ class RunOut(BaseModel):
     minimum_weak_domains: int
     ideal_weak_domains: int
     authority_evaluation_mode: str
+    progress: int = 0
+    candidate_results: list[dict] = Field(default_factory=list)
 
 class OverlayRequest(BaseModel):
     urls: list[str] = Field(min_length=1, max_length=20)
@@ -203,3 +218,9 @@ class KeywordMetricsHandoffOut(BaseModel):
     validation_profile: dict
     created_at: datetime
     status: str
+    validation_scope: str
+    scope_reason: str
+    location_status: str
+    population_applicability: str
+    serp_mode: str
+    readiness_status: str

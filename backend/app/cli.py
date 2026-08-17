@@ -4,8 +4,10 @@ from app.models.entities import User
 from app.services.auth import hash_password, normalize_email
 
 def create_admin():
-    email = normalize_email(input("Admin email: "))
+    try: email = normalize_email(input("Admin email: "))
+    except ValueError as exc: print(str(exc)); print("Admin was not created."); return 1
     password = getpass.getpass("Admin password: ")
+    if len(password) < 12: print("Password must contain at least 12 characters."); print("Admin was not created."); return 1
     db = SessionLocal()
     try:
         if db.query(User).filter_by(email=email).first():

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app.models.entities import UserProviderQuota, UserQuotaBonus, RunReservation, UserProviderUsage, ProviderCall, uid
+from app.core.config import get_settings
 
 DEFAULT_PROVIDER = "google_ads"
 
@@ -35,6 +36,8 @@ def provider_capacity(db: Session, provider: str, customer_id: str | None, confi
     return max(0, int(configured_budget - used - active))
 
 def reserve(db: Session, user_id: str, provider: str, requested: int, batch_id: str | None, configured_budget: int | None, customer_id: str | None):
+    if getattr(get_settings(), "nicheforge_single_user_mode", False):
+        return None
     requested = max(0, int(requested)); info = allowance(db, user_id, provider); capacity = provider_capacity(db, provider, customer_id, configured_budget)
     effective = info["available"] if capacity is None else min(info["available"], capacity)
     if not info["enabled"]: raise ValueError("USER_PROVIDER_DISABLED")

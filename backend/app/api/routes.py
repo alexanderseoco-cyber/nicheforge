@@ -12,6 +12,7 @@ from app.schemas.domain import (ProjectCreate, ProjectHandoffAttachRequest, Proj
 from app.services.normalization import normalize_keyword, build_keyword
 from app.services.identity import canonical_identity, identity_key
 from app.services.validation_scope import GENERAL_SCOPE, LOCAL_SCOPE, resolve_scope
+from app.services.target_identity import normalize_target
 from app.services.gates import population_gate
 from app.services.pipeline import process_candidate
 from app.providers.factory import authority_provider
@@ -595,13 +596,22 @@ def create_run(project_id: str, payload: RunCreate, db: Session = Depends(get_db
         raise HTTPException(422, "One or more selected candidates do not belong to this project")
     configuration = profile.model_dump()
     configuration["selected_project_candidate_ids"] = list(dict.fromkeys(selected_ids))
+    selected_candidates = db.scalars(select(ProjectCandidate).where(ProjectCandidate.id.in_(selected_ids))).all()
+    target_values = []
+    for candidate in selected_candidates:
+        evidence = db.get(KeywordMetricEvidence, candidate.search_volume_evidence_id) if candidate.search_volume_evidence_id else None
+        if evidence:
+            target_values.append((normalize_target(evidence.country_code, evidence.location_target), evidence.country_code, evidence.location_target))
+    distinct_targets = {item[0] for item in target_values}
+    inherited_target = target_values[0] if len(distinct_targets) == 1 and target_values else ("US", "US", {"country_code": "US"})
+    configuration["inherited_validation_target"] = {"target": inherited_target[0], "country_code": inherited_target[1], "location_target": inherited_target[2]}
     run = Run(project_id=project_id, min_population=profile.min_population, max_population=profile.max_population,
               min_search_volume=profile.min_search_volume, da_threshold=profile.da_threshold,
               required_low_da_count=profile.minimum_weak_domains, minimum_weak_domains=profile.minimum_weak_domains,
               ideal_weak_domains=profile.ideal_weak_domains, authority_evaluation_mode=profile.authority_evaluation_mode,
               authority_batch_size=profile.authority_batch_size, adaptive_seek_ideal=profile.adaptive_seek_ideal, organic_depth=profile.organic_depth,
               kd_enabled=profile.kd_enabled, kd_provider=profile.kd_provider, kd_threshold=profile.kd_threshold, kd_operator=profile.kd_operator, kd_mode=profile.kd_mode,
-              country_code="US", language_code="en", configuration_snapshot=configuration,
+              country_code=inherited_target[1], language_code="en", location_config=inherited_target[2], configuration_snapshot=configuration,
               provider_snapshot={}, freshness_policy_snapshot={}, enabled_gates={"population": True, "search_volume": True, "authority": True})
     db.add(run); db.commit(); db.refresh(run)
     return run
@@ -645,6 +655,12 @@ def _run_response(db: Session, run: Run):
         serp_reason = "SERP_PROVIDER_REQUEST_ERROR" if "SERP_PROVIDER_REQUEST_ERROR" in (row.reason_codes or []) else ("SERP_INSUFFICIENT_ORGANIC_RESULTS" if "SERP_INSUFFICIENT_ORGANIC_RESULTS" in (row.reason_codes or []) else None)
         serp_status = "RETRYABLE" if serp_reason else ("PASS" if row.serp_snapshot_id and row.status not in {"ERROR_RETRYABLE"} else "NOT RUN")
         results.append({"run_candidate_id": row.id, "project_candidate_id": row.project_candidate_id, "keyword": pc.display_keyword if pc else None, "validation_scope": row.validation_scope or (pc.validation_scope if pc else "LOCAL_RANK_RENT"), "population_applicability": "NOT_APPLICABLE" if row.validation_scope == "GENERAL_NICHE" else ("PASS" if row.population_evidence_id and row.status != "POPULATION_REJECTED" else ("REJECTED" if row.status == "POPULATION_REJECTED" else "NOT RUN")), "serp_mode": "NATIONAL" if row.validation_scope == "GENERAL_NICHE" else "LOCAL_CITY", "status": row.status, "reason_codes": row.reason_codes or [], "population": "NOT APPLICABLE" if row.validation_scope == "GENERAL_NICHE" else ("PASS" if row.population_evidence_id and row.status != "POPULATION_REJECTED" else ("REJECTED" if row.status == "POPULATION_REJECTED" else "NOT RUN")), "search_volume": "PASS" if row.search_volume_evidence_id and row.status not in {"SV_REJECTED", "POPULATION_REJECTED"} else ("REJECTED" if row.status == "SV_REJECTED" else "NOT RUN"), "search_volume_value": sv.avg_monthly_searches if sv else None, "search_volume_provider": sv.provider if sv else None, "serp": serp_status, "serp_reason": serp_reason, "serp_count": len(serp_rows), "serp_required": run.organic_depth, "serp_evidence": [{"position": item.position, "domain": item.root_domain, "url": item.url, "title": item.title} for item in serp_rows], "authority_opportunity": row.opportunity_classification if row.validation_scope == "GENERAL_NICHE" else None, "authority_opportunity_reason": row.authority_opportunity_reason, "weak_site_count": row.low_da_count, "authority_threshold": row.da_threshold_used, "da": "NOT RUN" if row.authority_results_available is None else ("PASS" if row.primary_gate_passed else "REJECTED"), "da_evidence": authority, "deep_analysis": "NOT RUN" if row.authority_results_available is None else ("NOT RUN" if row.validation_scope == "GENERAL_NICHE" and row.opportunity_classification is None else ("PASS" if row.opportunity_classification in {"PASS", "IDEAL", "STRONG_POTENTIAL", "GOOD_POTENTIAL", "POTENTIAL_NICHE"} else "FAIL")), "kd": "NOT RUN" if row.kd_status in (None, "MISSING") else row.kd_status, "final_result": "NOT PRODUCED" if row.status == "ERROR_RETRYABLE" else row.status})
+    target_is_worldwide = str(run.country_code).upper() in {"WORLD", "WORLDWIDE", "GLOBAL"}
+    target_label = "Global / Worldwide" if target_is_worldwide else ("United States" if str(run.country_code).upper() == "US" else str(run.country_code))
+    projected_serp_mode = "WORLDWIDE" if target_is_worldwide else "NATIONAL"
+    for result in results:
+        result["target"] = target_label
+        if result.get("validation_scope") == "GENERAL_NICHE": result["serp_mode"] = projected_serp_mode
     return {**{column.name: getattr(run, column.name) for column in Run.__table__.columns}, "progress": progress, "candidate_results": results}
 
 

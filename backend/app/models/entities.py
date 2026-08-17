@@ -43,7 +43,8 @@ class CandidateEntity(Base):
     canonical_identity: Mapped[str] = mapped_column(String(700), unique=True, index=True)
     identity_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     service_term_normalized: Mapped[str] = mapped_column(String(240), index=True)
-    city_id: Mapped[str] = mapped_column(ForeignKey("cities.id"), index=True)
+    city_id: Mapped[str | None] = mapped_column(ForeignKey("cities.id"), nullable=True, index=True)
+    validation_scope: Mapped[str] = mapped_column(String(30), default="LOCAL_RANK_RENT", index=True)
     language_code: Mapped[str] = mapped_column(String(16), default="en")
     country_code: Mapped[str] = mapped_column(String(2), default="US")
     canonical_keyword: Mapped[str] = mapped_column(String(400))
@@ -56,6 +57,9 @@ class ProjectCandidate(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
     candidate_entity_id: Mapped[str] = mapped_column(ForeignKey("candidate_entities.id"), index=True)
+    validation_scope: Mapped[str] = mapped_column(String(30), default="LOCAL_RANK_RENT", index=True)
+    scope_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    search_volume_evidence_id: Mapped[str | None] = mapped_column(ForeignKey("keyword_metric_evidence.id"), nullable=True, index=True)
     original_input: Mapped[str | None] = mapped_column(String(500), nullable=True)
     broad_category: Mapped[str | None] = mapped_column(String(160), nullable=True)
     micro_niche: Mapped[str | None] = mapped_column(String(160), nullable=True)
@@ -122,11 +126,15 @@ class RunCandidate(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
     project_candidate_id: Mapped[str] = mapped_column(ForeignKey("project_candidates.id"), index=True)
+    validation_scope: Mapped[str] = mapped_column(String(30), default="LOCAL_RANK_RENT", index=True)
+    authority_opportunity_reason: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     status: Mapped[str] = mapped_column(String(40), default=CandidateStatus.IMPORTED)
     automatic_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
     reason_codes: Mapped[list] = mapped_column(JSON, default=list)
     population_evidence_id: Mapped[str | None] = mapped_column(ForeignKey("population_evidence.id"), nullable=True)
     search_volume_evidence_id: Mapped[str | None] = mapped_column(ForeignKey("search_volume_evidence.id"), nullable=True)
+    # Canonical handoff lineage; the legacy column remains for historical rows.
+    keyword_metric_evidence_id: Mapped[str | None] = mapped_column(ForeignKey("keyword_metric_evidence.id"), nullable=True, index=True)
     keyword_difficulty_evidence_id: Mapped[str | None] = mapped_column(ForeignKey("keyword_difficulty_evidence.id"), nullable=True)
     serp_snapshot_id: Mapped[str | None] = mapped_column(ForeignKey("serp_snapshots.id"), nullable=True)
     da_threshold_used: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -180,6 +188,29 @@ class RunCandidateAuthorityEvidence(Base):
     counted_as_low_da: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     __table_args__ = (UniqueConstraint("run_candidate_id", "serp_result_row_id", name="uq_run_candidate_serp_authority"),)
+
+
+class RunCandidateProxyAuthorityEvidence(Base):
+    __tablename__ = "run_candidate_proxy_authority_evidence"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    run_candidate_id: Mapped[str] = mapped_column(ForeignKey("run_candidates.id"), index=True)
+    serp_result_row_id: Mapped[str] = mapped_column(ForeignKey("serp_results.id"), index=True)
+    proxy_authority_evidence_id: Mapped[str] = mapped_column(ForeignKey("proxy_authority_evidence.id"), index=True)
+    ranking_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    dr_value_used: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("run_candidate_id", "serp_result_row_id", name="uq_run_candidate_serp_proxy_authority"),)
+
+
+class RunCandidateBacklinkEvidence(Base):
+    __tablename__ = "run_candidate_backlink_evidence"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    run_candidate_id: Mapped[str] = mapped_column(ForeignKey("run_candidates.id"), index=True)
+    serp_result_row_id: Mapped[str] = mapped_column(ForeignKey("serp_results.id"), index=True)
+    proxy_backlink_evidence_id: Mapped[str] = mapped_column(ForeignKey("proxy_backlink_feature_evidence.id"), index=True)
+    ranking_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("run_candidate_id", "serp_result_row_id", name="uq_run_candidate_serp_backlink"),)
 
 
 class PopulationEvidence(Base):

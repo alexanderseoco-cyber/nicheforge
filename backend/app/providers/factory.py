@@ -5,6 +5,7 @@ from app.providers.runtime_config import DataForSEOConfig, ProviderMode
 from app.providers.moz import MozAuthorizedProvider
 from app.providers.ahrefs import AhrefsDomainRatingProvider
 from app.providers.dataforseo_backlinks import DataForSEOBacklinkSummaryProvider
+from app.providers.location_resolution import DataForSEOLocationResolver
 from app.providers.keyword_metrics import (GoogleAdsKeywordMetricsProvider,
     ImportedKeywordMetricsProvider, MockKeywordMetricsProvider)
 from app.services.customer_rate_limiter import CustomerRateLimiter
@@ -56,7 +57,9 @@ def serp_provider():
         config.validate_paid_execution(config.standard_serp_cost, s.dataforseo_trial_approved)
         if config.mode == ProviderMode.SANDBOX:
             return DataForSEOSandboxSerpProvider()
-        return DataForSEOSerpProvider(s.dataforseo_login or "", s.dataforseo_password or "", mode=config.mode)
+        provider = DataForSEOSerpProvider(s.dataforseo_login or "", s.dataforseo_password or "", mode=config.mode)
+        provider.location_resolver = DataForSEOLocationResolver(provider.client)
+        return provider
     return MockSerpProvider()
 
 

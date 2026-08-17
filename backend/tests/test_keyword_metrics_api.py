@@ -9,7 +9,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from fastapi import FastAPI
 from app.api.routes import router
-from app.models.entities import KeywordMetricEvidence, ProviderCall, User, UserProviderQuota
+from app.models.entities import KeywordMetricEvidence, ProviderCall, User, UserProviderQuota, Project
 from app.services.auth import hash_password, issue_access_token
 from app.api import routes
 from app.api import auth_routes
@@ -87,4 +87,26 @@ def test_provider_telemetry_summary_is_local_only(monkeypatch):
     assert response.status_code == 200
     assert response.json()["actual_attempts"] == 0
     assert response.json()["consumed_operations"] == 0
+    app.dependency_overrides.clear(); db.close()
+
+
+def test_validation_preview_is_authenticated_zero_network_and_non_mutating(monkeypatch):
+    client, db, headers = _client(monkeypatch)
+    project = Project(name="Preview", profile_snapshot={"min_population": 20000, "max_population": 120000, "min_search_volume": 300})
+    db.add(project); db.commit()
+    response = client.post(f"/api/v1/projects/{project.id}/validation-preview", headers=headers, json={"profile": {"min_population": 20000, "max_population": 120000, "min_search_volume": 300}})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["transport_would_occur"] is False and body["preview_network_requests"] == 0
+    assert body["conditional_work"]["kd"] == "CONDITIONAL_ON_DA_QUALIFICATION"
+    assert db.query(ProviderCall).count() == 0
+    app.dependency_overrides.clear(); db.close()
+
+
+def test_validation_preview_requires_authentication(monkeypatch):
+    client, db, _ = _client(monkeypatch)
+    project = Project(name="Protected Preview", profile_snapshot={})
+    db.add(project); db.commit()
+    response = client.post(f"/api/v1/projects/{project.id}/validation-preview", json={"profile": {}})
+    assert response.status_code == 401
     app.dependency_overrides.clear(); db.close()

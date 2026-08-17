@@ -21,6 +21,45 @@ class AuthorityEvaluation:
     opportunity_classification: str
 
 
+@dataclass(frozen=True)
+class GeneralAuthorityOpportunity:
+    weak_count: int
+    evaluated_count: int
+    threshold: float
+    classification: str
+    reason: str
+
+
+def evaluate_general_opportunity_metrics(da_values: list[float | None], dr_values: list[float | None], threshold: float = 20.0) -> GeneralAuthorityOpportunity:
+    da_weak = sum(value is not None and value < threshold for value in da_values)
+    dr_weak = sum(value is not None and value < threshold for value in dr_values)
+    unique_weak = sum((da is not None and da < threshold) or (dr is not None and dr < threshold) for da, dr in zip(da_values, dr_values))
+    if unique_weak >= 4: classification = "STRONG_POTENTIAL"
+    elif unique_weak == 3: classification = "GOOD_POTENTIAL"
+    elif unique_weak >= 1: classification = "POTENTIAL_NICHE"
+    else: classification = "LOW_AUTHORITY_OPPORTUNITY"
+    reason = f"{unique_weak} unique ranking domains meet DA < {threshold:g} or DR < {threshold:g}; {da_weak} DA records and {dr_weak} DR records are below threshold."
+    if 1 <= unique_weak <= 2: reason += " The opportunity remains worth deeper review despite being below the preferred 3–4 weak-domain range."
+    return GeneralAuthorityOpportunity(unique_weak, sum(da is not None or dr is not None for da, dr in zip(da_values, dr_values)), threshold, classification, reason)
+
+
+def evaluate_general_opportunity(da_values: list[float | None], threshold: float = 20.0) -> GeneralAuthorityOpportunity:
+    observed = [value for value in da_values if value is not None]
+    weak = sum(value < threshold for value in observed)
+    if weak >= 4:
+        classification = "STRONG_POTENTIAL"
+    elif weak == 3:
+        classification = "GOOD_POTENTIAL"
+    elif weak >= 1:
+        classification = "POTENTIAL_NICHE"
+    else:
+        classification = "LOW_AUTHORITY_OPPORTUNITY"
+    reason = f"{weak} of {len(observed)} evaluated ranking domains have DA below {threshold:g}."
+    if 1 <= weak <= 2:
+        reason += " The opportunity is below the preferred 3–4 weak-domain range but remains worth deeper review."
+    return GeneralAuthorityOpportunity(weak, len(observed), threshold, classification, reason)
+
+
 def evaluate_authority(da_values: list[float | None], organic_depth: int, minimum_weak_domains: int = 4,
                        ideal_weak_domains: int = 5, da_threshold: float = 10.0,
                        mode: AuthorityEvaluationMode = AuthorityEvaluationMode.ADAPTIVE,

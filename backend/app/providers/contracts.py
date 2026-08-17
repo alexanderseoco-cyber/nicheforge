@@ -50,6 +50,8 @@ class SerpRequest:
     location_name: str
     language_code: str = "en"
     depth: int = 10
+    country_code: str = "US"
+    location_code: int | None = None
 
 
 @dataclass

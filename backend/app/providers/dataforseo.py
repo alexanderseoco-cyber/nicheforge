@@ -82,7 +82,9 @@ class DataForSEOSerpProvider:
         out: list[SerpResult] = []
         for req in requests:
             location_code = None
-            if self.location_resolver is not None:
+            if req.location_code is not None:
+                location_code = req.location_code
+            elif self.location_resolver is not None and req.location_name.casefold() not in {"us", "united states", "usa"}:
                 parts = [part.strip() for part in (req.location_name or "").split(",")]
                 if len(parts) < 2:
                     raise ValueError("Trial SERP requires an exact city and state location")
@@ -96,7 +98,7 @@ class DataForSEOSerpProvider:
             if location_code is not None:
                 payload_item["location_code"] = location_code
             else:
-                payload_item["location_name"] = req.location_name
+                raise ValueError("SERP requires a resolved location_code for local or national targeting")
             payload = [payload_item]
             data = await self.client.post("/v3/serp/google/organic/live/regular", payload)
             task = (data.get("tasks") or [{}])[0]

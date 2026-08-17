@@ -18,4 +18,7 @@ def test_handoff_references_exact_evidence_and_preserves_subset():
     response=TestClient(app).post("/api/v1/keyword-metrics/send-to-validation", json={"evidence_ids":[evidence.id],"validation_profile":{"min_search_volume":260}})
     assert response.status_code==200 and response.json()["selected_count"]==1 and response.json()["provider_requests"]==0
     handoff=db.query(KeywordMetricValidationHandoff).one(); assert handoff.evidence_id==evidence.id; assert handoff.provider_keyword=="term exact"; assert handoff.validation_profile_snapshot["min_search_volume"]==260
+    duplicate=TestClient(app).post("/api/v1/keyword-metrics/send-to-validation", json={"evidence_ids":[evidence.id],"validation_profile":{"min_search_volume":100}})
+    assert duplicate.status_code==200 and duplicate.json()["new_count"]==0 and duplicate.json()["existing_count"]==1
+    assert db.query(KeywordMetricValidationHandoff).count()==1
     app.dependency_overrides.clear(); db.close()

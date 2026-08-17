@@ -8,15 +8,22 @@ from sqlalchemy.orm import Session
 from app.models.entities import (
     AuthorityEvidence, CandidateEntity, CandidateEvent, CandidateStatus, City, ProjectCandidate,
     ProviderCache, ProviderCall, Run, RunCandidate, RunCandidateAuthorityEvidence,
-    SearchVolumeEvidence, KeywordDifficultyEvidence, SerpResultRow, SerpSnapshot, PopulationEvidence,
+    SearchVolumeEvidence, KeywordMetricEvidence, KeywordDifficultyEvidence, SerpResultRow, SerpSnapshot, PopulationEvidence, RunCandidateProxyAuthorityEvidence, ProxyAuthorityEvidence,
 )
 from app.providers.contracts import AuthorityResult, AuthorityTarget, KeywordMetricRequest, SerpRequest
 from app.providers.factory import authority_provider, search_volume_provider, serp_provider
 from app.services.cache_keys import evidence_is_fresh, provider_cache_key
+from app.services.target_identity import targets_compatible
+from app.services.sv_target_stage import select_sv_target_evidence
+from app.services.serp_stage import build_serp_request, request_serp_and_classify
+from app.services.authority_stage import evaluate_primary_authority
+from app.services.ahrefs_stage import execute_ahrefs_stage, ahrefs_stage_not_executed
 from app.services.gates import population_gate, search_volume_gate
 from app.services.normalization import root_domain
 from app.domain.freshness import FreshnessPolicy, can_reuse
-from app.services.authority_evaluation import AuthorityEvaluationMode, evaluate_authority
+from app.services.authority_evaluation import AuthorityEvaluationMode, evaluate_authority, evaluate_general_opportunity, evaluate_general_opportunity_metrics
+from app.services.proxy_authority import evaluate_run_candidate_proxy, enrich_backlink_features, select_interesting_backlink_rows
+from app.core.config import get_settings
 
 
 def utc_now() -> datetime:
@@ -86,50 +93,78 @@ async def execute_run(db: Session, run_id: str, project_candidate_ids: list[str]
     for pc in candidates:
         rc = db.scalar(select(RunCandidate).where(RunCandidate.run_id == run.id, RunCandidate.project_candidate_id == pc.id))
         if not rc:
-            rc = RunCandidate(run_id=run.id, project_candidate_id=pc.id)
+            rc = RunCandidate(run_id=run.id, project_candidate_id=pc.id, validation_scope=pc.validation_scope)
             db.add(rc); db.flush(); _event(db, rc, "RUN_CANDIDATE_STARTED", resulting=rc.status)
         if rc.finished_at:
             continue
         try:
             result = None
             entity_city = db.scalar(select(City).join(CandidateEntity, City.id == CandidateEntity.city_id).where(CandidateEntity.id == pc.candidate_entity_id))
-            if entity_city is None:
+            is_general = pc.validation_scope == "GENERAL_NICHE"
+            if entity_city is None and not is_general:
                 _set_status(rc, "ERROR_TERMINAL", "PROVIDER_ERROR"); counters["provider_errors"] += 1; continue
-            pop_key = provider_cache_key("local", "population", city_id=entity_city.id, vintage=entity_city.population_vintage)
-            pop = _fresh_cached(db, pop_key, "population", PopulationEvidence)
-            if not pop:
-                pop = PopulationEvidence(candidate_entity_id=pc.candidate_entity_id, city_id=entity_city.id, provider="local", source_kind="census_csv", population=entity_city.population, population_vintage=entity_city.population_vintage, raw_payload={"city": entity_city.name}, source_metadata={"city_id": entity_city.id}, fetched_at=utc_now(), fresh_until=utc_now()+timedelta(days=365))
-                db.add(pop); db.flush(); db.add(ProviderCache(cache_key=pop_key, provider="local", operation="population", evidence_type="population", evidence_id=pop.id, fetched_at=pop.fetched_at, fresh_until=pop.fresh_until))
-            rc.population_evidence_id = pop.id; _event(db, rc, "POPULATION_SELECTED", refs={"population_evidence_id": pop.id})
-            decision = population_gate(pop.population, type("Profile", (), {"min_population": run.min_population, "max_population": run.max_population})())
-            if not decision.passed:
-                _set_status(rc, "POPULATION_REJECTED", decision.reason_codes[0]); counters["population_rejected"] += 1; rc.finished_at = utc_now(); continue
-            counters["population_passed"] += 1; _event(db, rc, "POPULATION_PASSED", resulting="SV_PENDING")
+            location_name = f"{entity_city.name}, {entity_city.state_code}" if entity_city else run.country_code
+            if not is_general:
+                pop_key = provider_cache_key("local", "population", city_id=entity_city.id, vintage=entity_city.population_vintage)
+                pop = _fresh_cached(db, pop_key, "population", PopulationEvidence)
+                if not pop:
+                    pop = PopulationEvidence(candidate_entity_id=pc.candidate_entity_id, city_id=entity_city.id, provider="local", source_kind="census_csv", population=entity_city.population, population_vintage=entity_city.population_vintage, raw_payload={"city": entity_city.name}, source_metadata={"city_id": entity_city.id}, fetched_at=utc_now(), fresh_until=utc_now()+timedelta(days=365))
+                    db.add(pop); db.flush(); db.add(ProviderCache(cache_key=pop_key, provider="local", operation="population", evidence_type="population", evidence_id=pop.id, fetched_at=pop.fetched_at, fresh_until=pop.fresh_until))
+                rc.population_evidence_id = pop.id; _event(db, rc, "POPULATION_SELECTED", refs={"population_evidence_id": pop.id})
+                decision = population_gate(pop.population, type("Profile", (), {"population_enabled": True, "min_population": run.min_population, "max_population": run.max_population})())
+                if not decision.passed:
+                    _set_status(rc, "POPULATION_REJECTED", decision.reason_codes[0]); counters["population_rejected"] += 1; rc.finished_at = utc_now(); continue
+                counters["population_passed"] += 1; _event(db, rc, "POPULATION_PASSED", resulting="SV_PENDING")
+            else:
+                _event(db, rc, "POPULATION_NOT_APPLICABLE", resulting="SV_PENDING", metadata={"reason": "General Niche candidates are not city-targeted."})
             keyword = pc.display_keyword
-            sv_key = provider_cache_key("mock", "search_volume", keyword=keyword, location=entity_city.name + ", " + entity_city.state_code, language=run.language_code, country=run.country_code)
-            sv, sv_stale_warning = _policy_cached(db, sv_key, "search_volume", SearchVolumeEvidence, run.freshness_policy)
+            sv_key = provider_cache_key("mock", "search_volume", keyword=keyword, location=location_name, language=run.language_code, country=run.country_code)
+            # Search Volume handoffs point to the immutable keyword-metrics
+            # evidence row. Keep the legacy SearchVolumeEvidence cache fallback
+            # for older project candidates, but prefer the linked handoff row.
+            sv_selection = select_sv_target_evidence(db, pc, run, keyword, sv_key)
+            sv = sv_selection.evidence
+            sv_target_mismatch = sv_selection.target_mismatch
+            sv_stale_warning = sv_selection.stale_warning
             if sv:
                 counters["cache_hits"] += 1; _call(db, run, rc, sv.provider, "sv", "reuse", sv_key, "cache_hit", sv.source_kind, True)
                 if sv_stale_warning: _event(db, rc, "STALE_EVIDENCE_REUSED", refs={"search_volume_evidence_id": sv.id}, metadata={"freshness_policy": run.freshness_policy, "stage": "search_volume"})
             else:
-                result = (await search_volume_provider().fetch([KeywordMetricRequest(keyword, f"{entity_city.name}, {entity_city.state_code}, United States", run.language_code)]))[0]
-                sv = SearchVolumeEvidence(candidate_entity_id=pc.candidate_entity_id, keyword=keyword, location_name=entity_city.name + ", " + entity_city.state_code, language_code=run.language_code, country_code=run.country_code, provider=result.provider, source_kind=result.provider, avg_monthly_searches=result.avg_monthly_searches, cpc=result.cpc, competition=result.competition, monthly_history=result.monthly_history, raw_payload=result.raw or {}, request_metadata={"location": entity_city.name}, fetched_at=utc_now(), fresh_until=utc_now()+timedelta(days=30))
+                result = (await search_volume_provider().fetch([KeywordMetricRequest(keyword, location_name, run.language_code)]))[0]
+                sv = SearchVolumeEvidence(candidate_entity_id=pc.candidate_entity_id, keyword=keyword, location_name=location_name, language_code=run.language_code, country_code=run.country_code, provider=result.provider, source_kind=result.provider, avg_monthly_searches=result.avg_monthly_searches, cpc=result.cpc, competition=result.competition, monthly_history=result.monthly_history, raw_payload=result.raw or {}, request_metadata={"location": location_name}, fetched_at=utc_now(), fresh_until=utc_now()+timedelta(days=30))
                 db.add(sv); db.flush(); db.add(ProviderCache(cache_key=sv_key, provider=sv.provider, operation="search_volume", evidence_type="search_volume", evidence_id=sv.id, fetched_at=sv.fetched_at, fresh_until=sv.fresh_until)); _call(db, run, rc, sv.provider, "sv", "fetch", sv_key, "success", sv.source_kind); counters["provider_calls"] += 1
-            rc.search_volume_evidence_id = sv.id; _event(db, rc, "SV_SELECTED", refs={"search_volume_evidence_id": sv.id})
+            if isinstance(sv, KeywordMetricEvidence):
+                rc.keyword_metric_evidence_id = sv.id
+                rc.search_volume_evidence_id = None
+                _event(db, rc, "SV_SELECTED", refs={"keyword_metric_evidence_id": sv.id})
+            else:
+                rc.search_volume_evidence_id = sv.id
+                _event(db, rc, "SV_SELECTED", refs={"search_volume_evidence_id": sv.id})
+            if sv is None and sv_target_mismatch:
+                _set_status(rc, "SV_REJECTED", "SV_TARGET_MISMATCH"); counters["sv_rejected"] += 1; rc.finished_at = utc_now(); continue
             if sv.avg_monthly_searches is None:
                 _set_status(rc, "SV_REJECTED", "SV_MISSING"); counters["sv_rejected"] += 1; rc.finished_at = utc_now(); continue
             if sv.avg_monthly_searches < run.min_search_volume:
                 _set_status(rc, "SV_REJECTED", "SV_BELOW_THRESHOLD"); counters["sv_rejected"] += 1; rc.finished_at = utc_now(); continue
             counters["sv_passed"] += 1; _event(db, rc, "SV_PASSED", resulting="SERP_PENDING")
-            serp_key = provider_cache_key("mock", "serp", keyword=keyword, location=entity_city.name + ", " + entity_city.state_code, language=run.language_code, country=run.country_code, device="desktop")
+            serp_key = provider_cache_key("mock", "serp", keyword=keyword, location=location_name, language=run.language_code, country=run.country_code, device="desktop")
             snap, serp_stale_warning = _policy_cached(db, serp_key, "serp", SerpSnapshot, run.freshness_policy)
             if snap and snap.requested_depth >= run.organic_depth:
                 rows = db.scalars(select(SerpResultRow).where(SerpResultRow.snapshot_id == snap.id).order_by(SerpResultRow.position)).all()
                 counters["cache_hits"] += 1; _call(db, run, rc, snap.provider, "serp", "reuse", serp_key, "cache_hit", snap.source_kind, True)
                 if serp_stale_warning: _event(db, rc, "STALE_EVIDENCE_REUSED", refs={"serp_snapshot_id": snap.id}, metadata={"freshness_policy": run.freshness_policy, "stage": "serp"})
             else:
-                serp = (await serp_provider().fetch([SerpRequest(keyword, f"{entity_city.name}, {entity_city.state_code}, United States", run.language_code, run.organic_depth)]))[0]
-                snap = SerpSnapshot(candidate_id="pipeline", candidate_entity_id=pc.candidate_entity_id, provider=serp.provider, source_kind=serp.provider, keyword=keyword, location_name=entity_city.name + ", " + entity_city.state_code, language_code=run.language_code, country_code=run.country_code, requested_depth=run.organic_depth, raw_payload=serp.raw or {}, fetched_at=utc_now(), fresh_until=utc_now()+timedelta(days=7))
+                serp_request = build_serp_request(keyword, location_name, run.language_code, run.organic_depth, run.country_code, 2840 if is_general and run.country_code == "US" else None)
+                serp_stage = await request_serp_and_classify(serp_provider(), serp_request)
+                serp = serp_stage.result
+                if serp_stage.reason_code == "SERP_PROVIDER_REQUEST_ERROR":
+                    _call(db, run, rc, serp.provider, "serp", "fetch", serp_key, "error", serp.provider, False)
+                    _set_status(rc, serp_stage.status, serp_stage.reason_code)
+                    counters["provider_errors"] += 1
+                    rc.finished_at = utc_now()
+                    db.add(CandidateEvent(run_id=run.id, run_candidate_id=rc.id, project_candidate_id=pc.id, event_type="SERP_PROVIDER_ERROR", resulting_status=rc.status, reason_code=serp_stage.reason_code, metadata_json={"provider_status_code": serp_stage.provider_status_code, "provider_status_message": serp_stage.provider_status_message}))
+                    continue
+                snap = SerpSnapshot(candidate_id="pipeline", candidate_entity_id=pc.candidate_entity_id, provider=serp.provider, source_kind=serp.provider, keyword=keyword, location_name=location_name, language_code=run.language_code, country_code=run.country_code, requested_depth=run.organic_depth, raw_payload=serp.raw or {}, fetched_at=utc_now(), fresh_until=utc_now()+timedelta(days=7))
                 db.add(snap); db.flush(); db.add(ProviderCache(cache_key=serp_key, provider=snap.provider, operation="serp", evidence_type="serp", evidence_id=snap.id, fetched_at=snap.fetched_at, fresh_until=snap.fresh_until)); _call(db, run, rc, snap.provider, "serp", "fetch", serp_key, "success", snap.source_kind); counters["provider_calls"] += 1
                 rows=[]
                 for item in serp.organic[:run.organic_depth]:
@@ -176,7 +211,7 @@ async def execute_run(db: Session, run_id: str, project_candidate_ids: list[str]
                     if stale_warning: _event(db, rc, "STALE_EVIDENCE_REUSED", refs={"authority_evidence_id": ev.id}, metadata={"freshness_policy": run.freshness_policy, "stage": "authority"})
                 usable=metric.da is not None; available += int(usable); counted=bool(usable and metric.da < run.da_threshold); low += int(counted); db.add(RunCandidateAuthorityEvidence(run_candidate_id=rc.id, serp_result_row_id=row.id, authority_evidence_id=ev.id, ranking_position=row.position, da_value_used=metric.da, counted_as_low_da=counted))
                 if adaptive_recalculation:
-                    probe = evaluate_authority([m.da if m else None for m in observed_metrics], run.organic_depth, run.required_low_da_count, run.ideal_weak_domains, run.da_threshold, AuthorityEvaluationMode.ADAPTIVE, run.adaptive_seek_ideal, row_index + 1, fetched_count)
+                    probe = evaluate_primary_authority(observed_metrics, serp_count=run.organic_depth, required_weak=run.required_low_da_count, ideal_weak=run.ideal_weak_domains, da_threshold=run.da_threshold, mode=AuthorityEvaluationMode.ADAPTIVE, adaptive_seek_ideal=run.adaptive_seek_ideal, cached_count=row_index + 1, missing_count=fetched_count).evaluation
                     if probe.primary_gate_result in ("PASS", "PRIMARY_REJECTED"):
                         break
             if adaptive_recalculation:
@@ -184,27 +219,48 @@ async def execute_run(db: Session, run_id: str, project_candidate_ids: list[str]
                 # even when compatible cache rows existed for them.
                 evaluated_positions = row_index + 1 if rows else 0
                 metrics = observed_metrics[:evaluated_positions] + [None] * max(0, len(rows) - evaluated_positions)
+            settings = get_settings()
+            if settings.ahrefs_proxy_enabled and settings.ahrefs_live_approved:
+                ahrefs_stage = await execute_ahrefs_stage(db, run, rc, rows, threshold=14.0, minimum_weak=4, ideal_weak=5)
+            else:
+                ahrefs_stage = ahrefs_stage_not_executed(rows)
             minimum_weak = run.required_low_da_count
-            evaluation = evaluate_authority([metric.da if metric else None for metric in metrics], run.organic_depth, minimum_weak, run.ideal_weak_domains, run.da_threshold, AuthorityEvaluationMode(run.authority_evaluation_mode), run.adaptive_seek_ideal, sum(1 for source in metric_sources if source[0] is not None), len(missing))
+            authority_stage = evaluate_primary_authority(metrics, serp_count=run.organic_depth, required_weak=minimum_weak, ideal_weak=run.ideal_weak_domains, da_threshold=run.da_threshold, mode=AuthorityEvaluationMode(run.authority_evaluation_mode), adaptive_seek_ideal=run.adaptive_seek_ideal, cached_count=sum(1 for source in metric_sources if source[0] is not None), missing_count=len(missing))
+            evaluation = authority_stage.evaluation
+            general_opportunity = evaluate_general_opportunity([metric.da if metric else None for metric in metrics], 20.0) if is_general else None
+            if is_general and settings.ahrefs_proxy_enabled and settings.ahrefs_live_approved:
+                dr_by_row = {row.id: ahrefs_stage.dr_by_domain.get(root_domain(row.url) or row.root_domain) for row in rows}
+                general_opportunity = evaluate_general_opportunity_metrics([metric.da if metric else None for metric in metrics], [dr_by_row.get(row.id) for row in rows], 20.0)
             rc.organic_results_evaluated=len(rows); rc.authority_results_available=available; rc.low_da_count=evaluation.confirmed_weak_count; rc.da_threshold_used=run.da_threshold; rc.required_low_da_count_used=minimum_weak; rc.minimum_weak_domains_used=minimum_weak; rc.ideal_weak_domains_used=run.ideal_weak_domains; rc.authority_evaluation_mode_used=run.authority_evaluation_mode; rc.adaptive_seek_ideal_used=run.adaptive_seek_ideal; rc.authority_targets_evaluated=evaluation.authority_targets_evaluated; rc.authority_targets_cached=evaluation.authority_targets_cached; rc.authority_targets_fetched=evaluation.authority_targets_fetched; rc.authority_targets_unchecked=evaluation.unchecked_remaining; rc.confirmed_weak_count=evaluation.confirmed_weak_count; rc.opportunity_classification=evaluation.opportunity_classification
+            if general_opportunity:
+                rc.low_da_count = general_opportunity.weak_count; rc.da_threshold_used = general_opportunity.threshold; rc.opportunity_classification = general_opportunity.classification; rc.authority_opportunity_reason = general_opportunity.reason
             authority_complete = available == len(rows) or (adaptive_recalculation and evaluation.primary_gate_result != "ERROR_RETRYABLE")
             if not authority_complete:
                 _set_status(rc, "ERROR_RETRYABLE", "DATA_INCOMPLETE"); counters["authority_incomplete"] += 1
+            elif is_general:
+                _set_status(rc, "PASS"); rc.automatic_status = general_opportunity.classification if general_opportunity else "POTENTIAL_NICHE"; rc.primary_gate_passed = True; counters["primary_passed"] += 1
             elif low < minimum_weak:
                 _set_status(rc, "PRIMARY_REJECTED", "LOW_DA_COUNT_BELOW_REQUIRED"); rc.automatic_status="PRIMARY_REJECTED"; rc.primary_gate_passed=False; counters["primary_rejected"] += 1
             else:
                 _set_status(rc, "PASS"); rc.automatic_status="PASS"; rc.primary_gate_passed=True; counters["primary_passed"] += 1
+            if settings.dataforseo_backlink_proxy_enabled and settings.dataforseo_backlink_live_approved and rc.primary_gate_passed:
+                da_by_domain = {row.root_domain: (metric.da if metric else None) for row, metric in zip(rows, metrics)}
+                dr_links = db.scalars(select(RunCandidateProxyAuthorityEvidence).where(RunCandidateProxyAuthorityEvidence.run_candidate_id == rc.id)).all()
+                dr_by_domain = {row.root_domain: link.dr_value_used for row, link in zip(rows, dr_links)}
+                backlink_rows = select_interesting_backlink_rows(rows, da_by_domain, dr_by_domain, 20.0)
+                if backlink_rows:
+                    await enrich_backlink_features(db, run, rc, backlink_rows)
             # KD is evaluated only after the DA primary gate. It remains a
             # supporting signal and can never turn a DA failure into a pass.
             if run.kd_enabled:
-                kd_key = provider_cache_key(sv.provider, "keyword_difficulty", keyword=keyword, location=entity_city.name + ", " + entity_city.state_code, language=run.language_code, country=run.country_code)
+                kd_key = provider_cache_key(sv.provider, "keyword_difficulty", keyword=keyword, location=location_name, language=run.language_code, country=run.country_code)
                 kd, kd_stale_warning = _policy_cached(db, kd_key, "keyword_difficulty", KeywordDifficultyEvidence, run.freshness_policy)
                 if kd and run.kd_provider == "moz" and kd.provider not in ("moz", "moz_csv", "mock"):
                     kd = None; kd_stale_warning = False
                 if kd and run.kd_provider == "ahrefs" and kd.provider not in ("ahrefs", "ahrefs_csv"):
                     kd = None; kd_stale_warning = False
                 if not kd and result is not None and result.keyword_difficulty is not None:
-                    kd = KeywordDifficultyEvidence(candidate_entity_id=pc.candidate_entity_id, keyword=keyword, location_name=entity_city.name + ", " + entity_city.state_code, language_code=run.language_code, country_code=run.country_code, provider=sv.provider, metric_type="keyword_difficulty", difficulty=result.keyword_difficulty, source_kind=sv.source_kind, raw_payload=result.raw or {}, request_metadata={"shared_with_search_volume": True}, fetched_at=utc_now(), fresh_until=utc_now()+timedelta(days=30))
+                    kd = KeywordDifficultyEvidence(candidate_entity_id=pc.candidate_entity_id, keyword=keyword, location_name=location_name, language_code=run.language_code, country_code=run.country_code, provider=sv.provider, metric_type="keyword_difficulty", difficulty=result.keyword_difficulty, source_kind=sv.source_kind, raw_payload=result.raw or {}, request_metadata={"shared_with_search_volume": True}, fetched_at=utc_now(), fresh_until=utc_now()+timedelta(days=30))
                     db.add(kd); db.flush(); db.add(ProviderCache(cache_key=kd_key, provider=kd.provider, operation="keyword_difficulty", evidence_type="keyword_difficulty", evidence_id=kd.id, fetched_at=kd.fetched_at, fresh_until=kd.fresh_until))
                 if kd:
                     rc.keyword_difficulty_evidence_id = kd.id; rc.kd_value_used = kd.difficulty; rc.kd_status = "IDEAL" if kd.difficulty < run.kd_threshold else "ABOVE_PREFERRED"
