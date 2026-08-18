@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -16,6 +17,8 @@ from app.services.cache_keys import evidence_is_fresh, provider_cache_key
 from app.services.target_identity import targets_compatible
 from app.services.sv_target_stage import select_sv_target_evidence
 from app.services.serp_stage import build_serp_request, request_serp_and_classify
+from app.services.serp_coverage import classify_serp_coverage, resolve_serp_policy
+from app.services.evidence_compatibility import serp_snapshot_coverage
 from app.services.authority_stage import evaluate_primary_authority
 from app.services.ahrefs_stage import execute_ahrefs_stage, ahrefs_stage_not_executed
 from app.services.gates import population_gate, search_volume_gate
@@ -23,7 +26,11 @@ from app.services.normalization import root_domain
 from app.domain.freshness import FreshnessPolicy, can_reuse
 from app.services.authority_evaluation import AuthorityEvaluationMode, evaluate_authority, evaluate_general_opportunity, evaluate_general_opportunity_metrics
 from app.services.proxy_authority import evaluate_run_candidate_proxy, enrich_backlink_features, select_interesting_backlink_rows
+from app.services.provider_location_registry import require_verified_mapping, ProviderLocationUnresolved
+from app.services.provider_cache import upsert_provider_cache
 from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 def utc_now() -> datetime:
@@ -39,13 +46,24 @@ def _event(db, rc, event_type, previous=None, resulting=None, reason=None, refs=
     ))
 
 
-def _call(db, run, rc, provider, stage, operation, key, outcome, source_kind, cache_hit=False, cost=0.0):
-    db.add(ProviderCall(
-        run_id=run.id, run_candidate_id=rc.id, provider=provider, stage=stage,
-        operation=operation, request_cache_key=key, outcome=outcome,
-        source_kind=source_kind, cache_hit=cache_hit, actual_cost=cost,
-        execution_mode=(run.configuration_snapshot or {}).get("dataforseo_mode") if provider.startswith("dataforseo") else None,
-    ))
+def _call(db, run, rc, provider, stage, operation, key, outcome, source_kind,
+          cache_hit=False, cost=0.0, telemetry=None):
+    try:
+        telemetry = telemetry or {}
+        with db.begin_nested():
+            db.add(ProviderCall(
+                run_id=run.id, run_candidate_id=rc.id, provider=provider, stage=stage,
+                operation=operation, request_cache_key=key, outcome=outcome,
+                source_kind=source_kind, cache_hit=cache_hit, actual_cost=cost,
+                execution_mode=(run.configuration_snapshot or {}).get("dataforseo_mode") if provider.startswith("dataforseo") else None,
+                **telemetry,
+            ))
+            db.flush()
+    except Exception as exc:
+        logger.warning(
+            "telemetry_write_failed provider=%s operation=%s run_id=%s run_candidate_id=%s exception=%s",
+            provider, operation, run.id, rc.id, type(exc).__name__,
+        )
 
 
 def _set_status(rc, status, reason=None):
@@ -62,7 +80,7 @@ def _fresh_cached(db: Session, key: str, evidence_type: str, model):
     return evidence if evidence else None
 
 
-def _policy_cached(db: Session, key: str, evidence_type: str, model, policy: str):
+def _policy_cached(db: Session, key: str, evidence_type: str, model, policy: str, *, requested_depth: int | None = None, minimum_organic_rows: int | None = None, minimum_organic_coverage: float | None = None):
     """Return compatible evidence plus a stale-warning flag under run policy."""
     cache = db.scalar(select(ProviderCache).where(ProviderCache.cache_key == key))
     if not cache or cache.evidence_type != evidence_type:
@@ -70,6 +88,15 @@ def _policy_cached(db: Session, key: str, evidence_type: str, model, policy: str
     fresh = evidence_is_fresh(cache.fresh_until)
     reuse, warning = can_reuse(policy, fresh)
     evidence = db.get(model, cache.evidence_id) if reuse else None
+    if evidence_type == "serp" and evidence is not None and str(evidence.provider).startswith("dataforseo"):
+        raw = evidence.raw_payload if isinstance(evidence.raw_payload, dict) else {}
+        response = raw.get("response") if isinstance(raw.get("response"), dict) else {}
+        status_code = response.get("status_code")
+        row_count = db.query(SerpResultRow).filter(SerpResultRow.snapshot_id == evidence.id).count()
+        coverage = serp_snapshot_coverage(evidence, observed_depth=row_count, requested_depth=requested_depth or evidence.requested_depth, minimum_organic_rows=minimum_organic_rows, minimum_organic_coverage=minimum_organic_coverage)
+        if coverage.evidence_state.value in {"PROVIDER_ERROR", "INSUFFICIENT", "INVALID_TARGET"}:
+            evidence = None
+            warning = False
     return (evidence, warning) if evidence else (None, False)
 
 
@@ -148,14 +175,24 @@ async def execute_run(db: Session, run_id: str, project_candidate_ids: list[str]
                 _set_status(rc, "SV_REJECTED", "SV_BELOW_THRESHOLD"); counters["sv_rejected"] += 1; rc.finished_at = utc_now(); continue
             counters["sv_passed"] += 1; _event(db, rc, "SV_PASSED", resulting="SERP_PENDING")
             serp_key = provider_cache_key("mock", "serp", keyword=keyword, location=location_name, language=run.language_code, country=run.country_code, device="desktop")
-            snap, serp_stale_warning = _policy_cached(db, serp_key, "serp", SerpSnapshot, run.freshness_policy)
-            if snap and snap.requested_depth >= run.organic_depth:
+            snap, serp_stale_warning = _policy_cached(db, serp_key, "serp", SerpSnapshot, run.freshness_policy, requested_depth=run.organic_depth, minimum_organic_rows=run.minimum_organic_rows, minimum_organic_coverage=run.minimum_organic_coverage)
+            if snap:
                 rows = db.scalars(select(SerpResultRow).where(SerpResultRow.snapshot_id == snap.id).order_by(SerpResultRow.position)).all()
                 counters["cache_hits"] += 1; _call(db, run, rc, snap.provider, "serp", "reuse", serp_key, "cache_hit", snap.source_kind, True)
                 if serp_stale_warning: _event(db, rc, "STALE_EVIDENCE_REUSED", refs={"serp_snapshot_id": snap.id}, metadata={"freshness_policy": run.freshness_policy, "stage": "serp"})
             else:
-                serp_request = build_serp_request(keyword, location_name, run.language_code, run.organic_depth, run.country_code, 2840 if is_general and run.country_code == "US" else None)
-                serp_stage = await request_serp_and_classify(serp_provider(), serp_request)
+                provider_location_code = 2840 if is_general and run.country_code == "US" else None
+                if not is_general and entity_city and get_settings().nicheforge_serp_provider == "dataforseo":
+                    try:
+                        provider_location_code = require_verified_mapping(db, entity_city, "dataforseo").location_code
+                    except ProviderLocationUnresolved:
+                        _set_status(rc, "ERROR_RETRYABLE", "PROVIDER_LOCATION_UNRESOLVED")
+                        counters["provider_errors"] += 1
+                        rc.finished_at = utc_now()
+                        continue
+                serp_request = build_serp_request(keyword, location_name, run.language_code, run.organic_depth, run.country_code, provider_location_code)
+                minimum_organic_rows, minimum_organic_coverage = resolve_serp_policy(requested_depth=run.organic_depth, minimum_organic_rows=run.minimum_organic_rows, minimum_organic_coverage=run.minimum_organic_coverage)
+                serp_stage = await request_serp_and_classify(serp_provider(), serp_request, minimum_organic_rows=minimum_organic_rows, minimum_organic_coverage=minimum_organic_coverage)
                 serp = serp_stage.result
                 if serp_stage.reason_code == "SERP_PROVIDER_REQUEST_ERROR":
                     _call(db, run, rc, serp.provider, "serp", "fetch", serp_key, "error", serp.provider, False)
@@ -165,15 +202,29 @@ async def execute_run(db: Session, run_id: str, project_candidate_ids: list[str]
                     db.add(CandidateEvent(run_id=run.id, run_candidate_id=rc.id, project_candidate_id=pc.id, event_type="SERP_PROVIDER_ERROR", resulting_status=rc.status, reason_code=serp_stage.reason_code, metadata_json={"provider_status_code": serp_stage.provider_status_code, "provider_status_message": serp_stage.provider_status_message}))
                     continue
                 snap = SerpSnapshot(candidate_id="pipeline", candidate_entity_id=pc.candidate_entity_id, provider=serp.provider, source_kind=serp.provider, keyword=keyword, location_name=location_name, language_code=run.language_code, country_code=run.country_code, requested_depth=run.organic_depth, raw_payload=serp.raw or {}, fetched_at=utc_now(), fresh_until=utc_now()+timedelta(days=7))
-                db.add(snap); db.flush(); db.add(ProviderCache(cache_key=serp_key, provider=snap.provider, operation="serp", evidence_type="serp", evidence_id=snap.id, fetched_at=snap.fetched_at, fresh_until=snap.fresh_until)); _call(db, run, rc, snap.provider, "serp", "fetch", serp_key, "success", snap.source_kind); counters["provider_calls"] += 1
+                db.add(snap); db.flush()
                 rows=[]
                 for item in serp.organic[:run.organic_depth]:
                     row=SerpResultRow(snapshot_id=snap.id, position=item.position, title=item.title, url=item.url, root_domain=root_domain(item.url)); db.add(row); rows.append(row)
                 db.flush()
+                upsert_provider_cache(db, cache_key=serp_key, provider=snap.provider, operation="serp", evidence_type="serp", evidence_id=snap.id, fetched_at=snap.fetched_at, fresh_until=snap.fresh_until)
+                _call(db, run, rc, snap.provider, "serp", "fetch", serp_key, "success", snap.source_kind); counters["provider_calls"] += 1
             rc.serp_snapshot_id = snap.id; _event(db, rc, "SERP_SELECTED", refs={"serp_snapshot_id": snap.id})
-            if len(rows) < run.organic_depth:
+            minimum_organic_rows, minimum_organic_coverage = resolve_serp_policy(requested_depth=run.organic_depth, minimum_organic_rows=run.minimum_organic_rows, minimum_organic_coverage=run.minimum_organic_coverage)
+            coverage = classify_serp_coverage(requested_depth=run.organic_depth, usable_organic_count=len(rows), minimum_organic_rows=minimum_organic_rows, minimum_organic_coverage=minimum_organic_coverage)
+            if not coverage.sufficient_for_downstream:
                 _set_status(rc, "ERROR_RETRYABLE", "SERP_INSUFFICIENT_ORGANIC_RESULTS"); counters["serp_incomplete"] += 1; rc.finished_at = utc_now(); continue
-            rows = rows[:run.organic_depth]; counters["serp_ready"] += 1; _event(db, rc, "SERP_READY", resulting="AUTHORITY_PENDING")
+            rows = rows[:run.organic_depth]; counters["serp_ready"] += 1; _event(db, rc, "SERP_READY", resulting="AUTHORITY_PENDING", metadata={"evidence_state": coverage.evidence_state, "requested_depth": coverage.requested_depth, "observed_depth": coverage.usable_organic_count, "coverage_ratio": coverage.coverage_ratio})
+            authority_occurrences = len(rows)
+            authority_urls = {row.url for row in rows}
+            authority_domains = {row.root_domain for row in rows}
+            authority_metadata = {
+                "authority_occurrence_count": authority_occurrences,
+                "unique_url_count": len(authority_urls),
+                "unique_domain_count": len(authority_domains),
+                "same_url_duplicate_count": authority_occurrences - len(authority_urls),
+                "same_domain_different_url_count": len(authority_urls) - len(authority_domains),
+            }
             metrics=[]; metric_sources=[]; missing=[]
             for row in rows:
                 authority_key = provider_cache_key("mock", "authority", target_url=row.url, root_domain=row.root_domain, target_type="URL")
@@ -189,6 +240,8 @@ async def execute_run(db: Session, run_id: str, project_candidate_ids: list[str]
             unresolved_index = 0
             adaptive_recalculation = run.run_type == "RECALCULATION" and run.authority_evaluation_mode == "ADAPTIVE"
             batch_size = max(1, run.authority_batch_size) if adaptive_recalculation else max(1, len(missing))
+            authority_batch_count = 0
+            authority_items_failed = 0
             available=0; low=0
             fetched_count = 0
             observed_metrics = list(metrics)
@@ -200,18 +253,68 @@ async def execute_run(db: Session, run_id: str, project_candidate_ids: list[str]
                         unresolved_index += len(batch)
                         fetched_queue = list(await authority_provider().fetch(batch))
                         fetched_count += len(fetched_queue)
+                        authority_items_failed += max(0, len(batch) - len(fetched_queue))
+                        authority_batch_count += 1
                         counters["provider_calls"] += 1
                         if fetched_queue:
-                            _call(db, run, rc, fetched_queue[0].provider, "authority", "batch_fetch", f"batch:{unresolved_index // batch_size}", "success", fetched_queue[0].provider)
+                            _call(
+                                db, run, rc, fetched_queue[0].provider, "authority", "batch_fetch",
+                                f"batch:{unresolved_index // batch_size}", "success",
+                                fetched_queue[0].provider,
+                                telemetry={
+                                    "logical_item_count": len(batch),
+                                    "unique_target_count": len({target.url for target in batch}),
+                                    "cache_miss_count": len(batch),
+                                    "provider_item_count": len(fetched_queue),
+                                    "items_returned_count": len(fetched_queue),
+                                    "items_failed_count": max(0, len(batch) - len(fetched_queue)),
+                                    "evidence_created_count": len(fetched_queue),
+                                    "batch_id": f"{run.id}:{rc.id}:{unresolved_index // batch_size}",
+                                    "batch_size": len(batch),
+                                    "batch_count": 1,
+                                    "http_request_count": 1,
+                                    "retry_count": 0,
+                                    "http_request_sent": True,
+                                    "actual_evidence_provider": fetched_queue[0].provider,
+                                    "cache_provider_dimension": "mock",
+                                    "cost_confidence": "UNKNOWN",
+                                },
+                            )
                     metric = fetched_queue.pop(0)
                     observed_metrics[row_index] = metric
                     ev=AuthorityEvidence(candidate_entity_id=pc.candidate_entity_id, target_url=row.url, root_domain=row.root_domain, target_type="URL", provider=metric.provider, source_kind=metric.provider, da=metric.da, pa=metric.pa, spam_score=metric.spam_score, linking_root_domains=metric.linking_root_domains, backlinks=metric.backlinks, raw_payload=metric.raw or {}, fetched_at=utc_now(), fresh_until=utc_now()+timedelta(days=30)); db.add(ev); db.flush(); db.add(ProviderCache(cache_key=authority_key, provider=ev.provider, operation="authority", evidence_type="authority", evidence_id=ev.id, fetched_at=ev.fetched_at, fresh_until=ev.fresh_until)); counters["provider_calls"] += 1
                 else:
-                    ev = cached; _call(db, run, rc, ev.provider, "authority", "reuse", authority_key, "cache_hit", ev.source_kind, True); counters["cache_hits"] += 1
+                    ev = cached
+                    _call(
+                        db, run, rc, ev.provider, "authority", "reuse", authority_key,
+                        "cache_hit", ev.source_kind, True,
+                        telemetry={
+                            "logical_item_count": 1,
+                            "unique_target_count": 1,
+                            "cache_hit_count": 1,
+                            "stale_count": int(stale_warning),
+                            "cache_outcome": "STALE_REUSED" if stale_warning else "HIT_FRESH",
+                            "evidence_reused_count": 1,
+                            "actual_evidence_provider": ev.provider,
+                            "cache_provider_dimension": "mock",
+                            "http_request_count": 0,
+                            "retry_count": 0,
+                            "http_request_sent": False,
+                            "cost_confidence": "UNKNOWN",
+                            "metadata_json": {
+                                "authority_occurrence_count": 1,
+                                "unique_url_count": 1,
+                                "unique_domain_count": 1,
+                                "same_url_duplicate_count": 0,
+                                "same_domain_different_url_count": 0,
+                            },
+                        },
+                    )
+                    counters["cache_hits"] += 1
                     if stale_warning: _event(db, rc, "STALE_EVIDENCE_REUSED", refs={"authority_evidence_id": ev.id}, metadata={"freshness_policy": run.freshness_policy, "stage": "authority"})
                 usable=metric.da is not None; available += int(usable); counted=bool(usable and metric.da < run.da_threshold); low += int(counted); db.add(RunCandidateAuthorityEvidence(run_candidate_id=rc.id, serp_result_row_id=row.id, authority_evidence_id=ev.id, ranking_position=row.position, da_value_used=metric.da, counted_as_low_da=counted))
                 if adaptive_recalculation:
-                    probe = evaluate_primary_authority(observed_metrics, serp_count=run.organic_depth, required_weak=run.required_low_da_count, ideal_weak=run.ideal_weak_domains, da_threshold=run.da_threshold, mode=AuthorityEvaluationMode.ADAPTIVE, adaptive_seek_ideal=run.adaptive_seek_ideal, cached_count=row_index + 1, missing_count=fetched_count).evaluation
+                    probe = evaluate_primary_authority(observed_metrics, observed_depth=len(observed_metrics), required_weak=run.required_low_da_count, ideal_weak=run.ideal_weak_domains, da_threshold=run.da_threshold, mode=AuthorityEvaluationMode.ADAPTIVE, adaptive_seek_ideal=run.adaptive_seek_ideal, cached_count=row_index + 1, missing_count=fetched_count).evaluation
                     if probe.primary_gate_result in ("PASS", "PRIMARY_REJECTED"):
                         break
             if adaptive_recalculation:
@@ -219,13 +322,58 @@ async def execute_run(db: Session, run_id: str, project_candidate_ids: list[str]
                 # even when compatible cache rows existed for them.
                 evaluated_positions = row_index + 1 if rows else 0
                 metrics = observed_metrics[:evaluated_positions] + [None] * max(0, len(rows) - evaluated_positions)
+            authority_cache_hits = sum(1 for cached, _, _ in metric_sources if cached is not None)
+            authority_stale_count = sum(1 for _, stale, _ in metric_sources if stale)
+            authority_cache_misses = len(missing)
+            authority_cache_outcome = (
+                "HIT_FRESH" if authority_cache_hits == authority_occurrences and authority_stale_count == 0
+                else "MIXED" if authority_cache_hits and authority_cache_misses
+                else "MISS_NOT_FOUND" if authority_cache_misses
+                else "STALE_REUSED" if authority_stale_count
+                else "NOT_CACHEABLE"
+            )
+            actual_authority_provider = next(
+                (metric.provider for metric in metrics if metric is not None),
+                "moz",
+            )
+            _call(
+                db, run, rc, actual_authority_provider, "authority", "authority_summary",
+                f"summary:{rc.id}",
+                "success" if authority_batch_count else "cache_hit",
+                actual_authority_provider,
+                cache_hit=authority_batch_count == 0,
+                telemetry={
+                    "logical_item_count": authority_occurrences,
+                    "unique_target_count": len(authority_urls),
+                    "cache_hit_count": authority_cache_hits,
+                    "cache_miss_count": authority_cache_misses,
+                    "stale_count": authority_stale_count,
+                    "cache_outcome": authority_cache_outcome,
+                    "cache_provider_dimension": "mock",
+                    "actual_evidence_provider": actual_authority_provider,
+                    "evidence_reused_count": authority_cache_hits,
+                    "evidence_created_count": fetched_count,
+                    "evidence_partial_count": sum(1 for metric in metrics if metric and (metric.da is None or metric.pa is None)),
+                    "evidence_missing_count": sum(1 for metric in metrics if metric is None),
+                    "provider_item_count": fetched_count,
+                    "items_returned_count": fetched_count,
+                    "items_failed_count": authority_items_failed,
+                    "batch_count": authority_batch_count,
+                    "http_request_count": authority_batch_count,
+                    "retry_count": 0,
+                    "http_request_sent": authority_batch_count > 0,
+                    "paid_attempt": None,
+                    "cost_confidence": "UNKNOWN",
+                    "metadata_json": authority_metadata,
+                },
+            )
             settings = get_settings()
             if settings.ahrefs_proxy_enabled and settings.ahrefs_live_approved:
                 ahrefs_stage = await execute_ahrefs_stage(db, run, rc, rows, threshold=14.0, minimum_weak=4, ideal_weak=5)
             else:
                 ahrefs_stage = ahrefs_stage_not_executed(rows)
             minimum_weak = run.required_low_da_count
-            authority_stage = evaluate_primary_authority(metrics, serp_count=run.organic_depth, required_weak=minimum_weak, ideal_weak=run.ideal_weak_domains, da_threshold=run.da_threshold, mode=AuthorityEvaluationMode(run.authority_evaluation_mode), adaptive_seek_ideal=run.adaptive_seek_ideal, cached_count=sum(1 for source in metric_sources if source[0] is not None), missing_count=len(missing))
+            authority_stage = evaluate_primary_authority(metrics, observed_depth=len(rows), required_weak=minimum_weak, ideal_weak=run.ideal_weak_domains, da_threshold=run.da_threshold, mode=AuthorityEvaluationMode(run.authority_evaluation_mode), adaptive_seek_ideal=run.adaptive_seek_ideal, cached_count=sum(1 for source in metric_sources if source[0] is not None), missing_count=len(missing))
             evaluation = authority_stage.evaluation
             general_opportunity = evaluate_general_opportunity([metric.da if metric else None for metric in metrics], 20.0) if is_general else None
             if is_general and settings.ahrefs_proxy_enabled and settings.ahrefs_live_approved:

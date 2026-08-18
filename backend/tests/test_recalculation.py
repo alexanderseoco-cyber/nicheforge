@@ -51,7 +51,8 @@ async def test_kd_threshold_recalculation_reuses_exact_evidence_without_new_prov
     new = db.scalar(select(RunCandidate).where(RunCandidate.run_id == run_b.id))
     assert new.keyword_difficulty_evidence_id == old.keyword_difficulty_evidence_id
     assert new.kd_status == "IDEAL"
-    assert db.query(ProviderCall).count() == calls_before
+    assert db.query(ProviderCall).count() == calls_before + 1
+    assert db.query(ProviderCall).filter_by(run_id=run_b.id, operation="PARENT_EVIDENCE_REUSE", http_request_count=0).count() == 1
     assert old.kd_status == old_status
 
 
@@ -72,7 +73,8 @@ async def test_da_only_recalculation_reuses_serp_and_authority_lineage():
     assert old.status == "PRIMARY_REJECTED" and new.status == "PASS"
     assert old.serp_snapshot_id == new.serp_snapshot_id
     assert [(x.ranking_position, x.authority_evidence_id) for x in old_lineage] == [(x.ranking_position, x.authority_evidence_id) for x in new_lineage]
-    assert db.query(ProviderCall).count() == calls_before
+    assert db.query(ProviderCall).count() == calls_before + 1
+    assert db.query(ProviderCall).filter_by(run_id=run_b.id, operation="PARENT_EVIDENCE_REUSE", http_request_count=0).count() == 1
     assert old.required_low_da_count_used == 11 and new.required_low_da_count_used == 10
     assert new.minimum_weak_domains_used == 10
     assert new.ideal_weak_domains_used == profile.ideal_weak_domains
@@ -102,7 +104,8 @@ async def test_adaptive_settings_recalculate_end_to_end_without_provider_calls()
     assert new.authority_evaluation_mode_used == "FULL"
     assert new.adaptive_seek_ideal_used is False
     assert new.serp_snapshot_id == old.serp_snapshot_id
-    assert db.query(ProviderCall).count() == calls_before
+    assert db.query(ProviderCall).count() == calls_before + 1
+    assert db.query(ProviderCall).filter_by(run_id=run_b.id, operation="PARENT_EVIDENCE_REUSE", http_request_count=0).count() == 1
     assert new.authority_targets_evaluated == 10 and new.authority_targets_unchecked == 0
 
 

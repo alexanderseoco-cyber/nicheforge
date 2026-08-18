@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
 class ValidationProfile(BaseModel):
@@ -16,11 +16,25 @@ class ValidationProfile(BaseModel):
     authority_batch_size: int = 5
     adaptive_seek_ideal: bool = True
     organic_depth: int = 10
+    minimum_organic_rows: int | None = None
+    minimum_organic_coverage: float = 0.90
     kd_enabled: bool = True
     kd_provider: str = "moz"
     kd_threshold: float = 15.0
     kd_operator: str = "<"
     kd_mode: str = "PRIORITY"
+
+    @model_validator(mode="after")
+    def validate_serp_policy(self):
+        if self.organic_depth <= 0:
+            raise ValueError("organic_depth must be greater than zero")
+        if self.minimum_organic_rows is None:
+            self.minimum_organic_rows = min(9, self.organic_depth)
+        if self.minimum_organic_rows <= 0 or self.minimum_organic_rows > self.organic_depth:
+            raise ValueError("minimum_organic_rows must be positive and no greater than organic_depth")
+        if not 0 < self.minimum_organic_coverage <= 1.0:
+            raise ValueError("minimum_organic_coverage must be greater than zero and at most 1.0")
+        return self
 
 
 class ProjectCreate(BaseModel):

@@ -14,7 +14,7 @@ from app.services.authority_evaluation import AuthorityEvaluation, AuthorityEval
 class AuthorityStageResult:
     metrics: tuple[AuthorityResult | None, ...]
     coverage_count: int
-    serp_count: int
+    observed_depth: int
     weak_da_count: int
     da_threshold: float
     evaluation: AuthorityEvaluation
@@ -24,7 +24,7 @@ class AuthorityStageResult:
 def evaluate_primary_authority(
     metrics: list[AuthorityResult | None],
     *,
-    serp_count: int,
+    observed_depth: int,
     da_threshold: float,
     required_weak: int,
     ideal_weak: int,
@@ -36,7 +36,7 @@ def evaluate_primary_authority(
     """Normalize Moz/primary authority facts and preserve existing policy."""
     evaluation = evaluate_authority(
         [metric.da if metric else None for metric in metrics],
-        serp_count,
+        observed_depth,
         required_weak,
         ideal_weak,
         da_threshold,
@@ -48,4 +48,4 @@ def evaluate_primary_authority(
     coverage = sum(1 for metric in metrics if metric and metric.da is not None)
     weak = sum(1 for metric in metrics if metric and metric.da is not None and metric.da < da_threshold)
     passed = evaluation.primary_gate_result == "PASS"
-    return AuthorityStageResult(tuple(metrics), coverage, serp_count, weak, da_threshold, evaluation, passed)
+    return AuthorityStageResult(tuple(metrics), coverage, observed_depth, weak, da_threshold, evaluation, passed)

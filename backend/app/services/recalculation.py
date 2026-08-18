@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from sqlalchemy import func, select
 
-from app.models.entities import AuthorityEvidence, CandidateEntity, CandidateEvent, City, KeywordDifficultyEvidence, KeywordMetricEvidence, ProjectCandidate, Run, RunCandidate, RunCandidateAuthorityEvidence, SearchVolumeEvidence, PopulationEvidence, SerpResultRow, SerpSnapshot
+from app.models.entities import AuthorityEvidence, CandidateEntity, CandidateEvent, City, KeywordDifficultyEvidence, KeywordMetricEvidence, ProjectCandidate, ProviderCall, Run, RunCandidate, RunCandidateAuthorityEvidence, SearchVolumeEvidence, PopulationEvidence, SerpResultRow, SerpSnapshot
 from app.schemas.domain import ValidationProfile
 from app.services.run_pipeline import execute_run
 from app.services.authority_evaluation import AuthorityEvaluationMode, evaluate_authority
 from app.domain.freshness import FreshnessPolicy
 from datetime import datetime, timezone
+from app.services.serp_coverage import resolve_serp_policy
+from app.services.evidence_compatibility import serp_snapshot_coverage
 
 
 def utc_now() -> datetime:
@@ -15,12 +17,13 @@ def utc_now() -> datetime:
 
 
 def _profile_from_run(run: Run) -> ValidationProfile:
-    return ValidationProfile(min_population=run.min_population, max_population=run.max_population, min_search_volume=run.min_search_volume, da_threshold=run.da_threshold, required_low_da_count=run.required_low_da_count, organic_depth=run.organic_depth)
+    policy_rows, policy_coverage = resolve_serp_policy(requested_depth=run.organic_depth, minimum_organic_rows=run.minimum_organic_rows, minimum_organic_coverage=run.minimum_organic_coverage)
+    return ValidationProfile(min_population=run.min_population, max_population=run.max_population, min_search_volume=run.min_search_volume, da_threshold=run.da_threshold, required_low_da_count=run.required_low_da_count, organic_depth=run.organic_depth, minimum_organic_rows=policy_rows, minimum_organic_coverage=policy_coverage)
 
 
 def create_recalculation(db, project_id: str, profile: ValidationProfile, parent_run_id: str | None = None, candidate_ids: list[str] | None = None, freshness_policy: FreshnessPolicy = FreshnessPolicy.REUSE_FRESH_ONLY) -> Run:
     minimum_weak = profile.required_low_da_count
-    run = Run(project_id=project_id, run_type="RECALCULATION", parent_run_id=parent_run_id, freshness_policy=freshness_policy, min_population=profile.min_population, max_population=profile.max_population, min_search_volume=profile.min_search_volume, da_threshold=profile.da_threshold, required_low_da_count=minimum_weak, minimum_weak_domains=minimum_weak, ideal_weak_domains=profile.ideal_weak_domains, authority_evaluation_mode=profile.authority_evaluation_mode, authority_batch_size=profile.authority_batch_size, adaptive_seek_ideal=profile.adaptive_seek_ideal, organic_depth=profile.organic_depth, kd_enabled=profile.kd_enabled, kd_provider=profile.kd_provider, kd_threshold=profile.kd_threshold, kd_operator=profile.kd_operator, kd_mode=profile.kd_mode, country_code="US", language_code="en", configuration_snapshot=profile.model_dump(), enabled_gates={"population": True, "search_volume": True, "authority": True})
+    run = Run(project_id=project_id, run_type="RECALCULATION", parent_run_id=parent_run_id, freshness_policy=freshness_policy, min_population=profile.min_population, max_population=profile.max_population, min_search_volume=profile.min_search_volume, da_threshold=profile.da_threshold, required_low_da_count=minimum_weak, minimum_weak_domains=minimum_weak, ideal_weak_domains=profile.ideal_weak_domains, authority_evaluation_mode=profile.authority_evaluation_mode, authority_batch_size=profile.authority_batch_size, adaptive_seek_ideal=profile.adaptive_seek_ideal, organic_depth=profile.organic_depth, minimum_organic_rows=profile.minimum_organic_rows, minimum_organic_coverage=profile.minimum_organic_coverage, kd_enabled=profile.kd_enabled, kd_provider=profile.kd_provider, kd_threshold=profile.kd_threshold, kd_operator=profile.kd_operator, kd_mode=profile.kd_mode, country_code="US", language_code="en", configuration_snapshot=profile.model_dump(), enabled_gates={"population": True, "search_volume": True, "authority": True})
     db.add(run); db.commit(); db.refresh(run)
     return run
 
@@ -45,7 +48,12 @@ def preview_recalculation(db, project_id: str, profile: ValidationProfile, candi
             population_reusable += 1
         if prior and prior.serp_snapshot_id:
             snap = db.get(SerpSnapshot, prior.serp_snapshot_id)
-            if snap and snap.requested_depth >= profile.organic_depth:
+            if snap:
+                observed = db.query(SerpResultRow).filter(SerpResultRow.snapshot_id == snap.id).count()
+                coverage = serp_snapshot_coverage(snap, observed_depth=observed, requested_depth=profile.organic_depth, minimum_organic_rows=profile.minimum_organic_rows, minimum_organic_coverage=profile.minimum_organic_coverage)
+            else:
+                coverage = None
+            if snap and coverage and coverage.sufficient_for_downstream:
                 serp_reusable += 1
                 if db.query(RunCandidateAuthorityEvidence).filter_by(run_candidate_id=prior.id).count() >= profile.organic_depth:
                     authority_reusable += 1
@@ -68,20 +76,26 @@ async def recalculate(db, project_id: str, profile: ValidationProfile, parent_ru
     candidates = db.scalars(stmt).all()
     fast_count = 0
     for pc in candidates:
-        prior = db.scalar(select(RunCandidate).where(RunCandidate.project_candidate_id == pc.id, RunCandidate.finished_at.is_not(None)).order_by(RunCandidate.created_at.desc()))
+        parent_filter = [RunCandidate.project_candidate_id == pc.id, RunCandidate.finished_at.is_not(None)]
+        if parent_run_id:
+            parent_filter.append(RunCandidate.run_id == parent_run_id)
+        prior = db.scalar(select(RunCandidate).where(*parent_filter).order_by(RunCandidate.created_at.desc()))
         if not prior or not prior.population_evidence_id or not prior.search_volume_evidence_id or not prior.serp_snapshot_id:
             continue
         snap = db.get(SerpSnapshot, prior.serp_snapshot_id)
         lineage = db.scalars(select(RunCandidateAuthorityEvidence).where(RunCandidateAuthorityEvidence.run_candidate_id == prior.id).order_by(RunCandidateAuthorityEvidence.ranking_position)).all()
-        if not snap or snap.requested_depth < profile.organic_depth or len(lineage) < profile.organic_depth:
+        observed_depth = db.query(SerpResultRow).filter(SerpResultRow.snapshot_id == snap.id).count() if snap else 0
+        coverage = serp_snapshot_coverage(snap, observed_depth=observed_depth, requested_depth=profile.organic_depth, minimum_organic_rows=profile.minimum_organic_rows, minimum_organic_coverage=profile.minimum_organic_coverage) if snap else None
+        if not snap or not coverage or not coverage.sufficient_for_downstream or len(lineage) < observed_depth:
             continue
         sv = db.get(SearchVolumeEvidence, prior.search_volume_evidence_id)
         pop = db.get(PopulationEvidence, prior.population_evidence_id)
         kd = db.get(KeywordDifficultyEvidence, prior.keyword_difficulty_evidence_id) if prior.keyword_difficulty_evidence_id else None
         if not sv or not pop or sv.avg_monthly_searches is None:
             continue
-        rc = RunCandidate(run_id=run.id, project_candidate_id=pc.id, population_evidence_id=pop.id, search_volume_evidence_id=sv.id, keyword_difficulty_evidence_id=kd.id if kd else None, serp_snapshot_id=snap.id, da_threshold_used=profile.da_threshold, required_low_da_count_used=profile.required_low_da_count, minimum_weak_domains_used=profile.required_low_da_count, ideal_weak_domains_used=profile.ideal_weak_domains, authority_evaluation_mode_used=profile.authority_evaluation_mode, adaptive_seek_ideal_used=profile.adaptive_seek_ideal, organic_results_evaluated=profile.organic_depth, kd_value_used=kd.difficulty if kd else None, kd_status=("IDEAL" if kd and kd.difficulty is not None and kd.difficulty < profile.kd_threshold else "ABOVE_PREFERRED") if kd else "MISSING")
+        rc = RunCandidate(run_id=run.id, project_candidate_id=pc.id, parent_run_candidate_id=prior.id, population_evidence_id=pop.id, search_volume_evidence_id=sv.id, keyword_difficulty_evidence_id=kd.id if kd else None, serp_snapshot_id=snap.id, da_threshold_used=profile.da_threshold, required_low_da_count_used=profile.required_low_da_count, minimum_weak_domains_used=profile.required_low_da_count, ideal_weak_domains_used=profile.ideal_weak_domains, authority_evaluation_mode_used=profile.authority_evaluation_mode, adaptive_seek_ideal_used=profile.adaptive_seek_ideal, organic_results_evaluated=observed_depth, kd_value_used=kd.difficulty if kd else None, kd_status=("IDEAL" if kd and kd.difficulty is not None and kd.difficulty < profile.kd_threshold else "ABOVE_PREFERRED") if kd else "MISSING")
         db.add(rc); db.flush()
+        db.add(ProviderCall(run_id=run.id, run_candidate_id=rc.id, provider=snap.provider, stage="serp", operation="PARENT_EVIDENCE_REUSE", request_cache_key=f"parent:{prior.id}:serp", outcome="reuse", source_kind="parent_evidence", cache_hit=False, actual_evidence_provider=snap.provider, evidence_reused_count=1, provider_item_count=0, batch_count=0, http_request_count=0, http_request_sent=False, paid_attempt=False, actual_cost=0.0, estimated_cost=0.0))
         if pop.population < profile.min_population or pop.population > profile.max_population:
             rc.status="POPULATION_REJECTED"; rc.reason_codes=["POPULATION_BELOW_MIN" if pop.population < profile.min_population else "POPULATION_ABOVE_MAX"]
         elif sv.avg_monthly_searches < profile.min_search_volume:
@@ -89,9 +103,9 @@ async def recalculate(db, project_id: str, profile: ValidationProfile, parent_ru
         elif profile.kd_enabled and profile.kd_mode == "HARD_GATE" and kd and kd.difficulty is not None and kd.difficulty >= profile.kd_threshold:
             rc.status="PRIMARY_REJECTED"; rc.automatic_status="PRIMARY_REJECTED"; rc.primary_gate_passed=False; rc.reason_codes=["KD_ABOVE_THRESHOLD"]
         else:
-            selected = lineage[:profile.organic_depth]; available = sum(1 for x in selected if x.da_value_used is not None); low = sum(1 for x in selected if x.da_value_used is not None and x.da_value_used < profile.da_threshold)
-            rc.authority_results_available=available; rc.low_da_count=low; rc.authority_targets_evaluated=available; rc.authority_targets_cached=len(selected); rc.authority_targets_fetched=0; rc.authority_targets_unchecked=max(0, profile.organic_depth - available); rc.confirmed_weak_count=low; rc.opportunity_classification="IDEAL" if low >= profile.ideal_weak_domains else ("PASS" if low >= profile.required_low_da_count else "FAIL")
-            if available < profile.organic_depth:
+            selected = lineage[:observed_depth]; available = sum(1 for x in selected if x.da_value_used is not None); low = sum(1 for x in selected if x.da_value_used is not None and x.da_value_used < profile.da_threshold)
+            rc.authority_results_available=available; rc.low_da_count=low; rc.authority_targets_evaluated=available; rc.authority_targets_cached=len(selected); rc.authority_targets_fetched=0; rc.authority_targets_unchecked=max(0, observed_depth - available); rc.confirmed_weak_count=low; rc.opportunity_classification="IDEAL" if low >= profile.ideal_weak_domains else ("PASS" if low >= profile.required_low_da_count else "FAIL")
+            if available < observed_depth:
                 rc.status="ERROR_RETRYABLE"; rc.reason_codes=["DATA_INCOMPLETE"]
             elif low < profile.required_low_da_count:
                 rc.status="PRIMARY_REJECTED"; rc.automatic_status="PRIMARY_REJECTED"; rc.primary_gate_passed=False; rc.reason_codes=["LOW_DA_COUNT_BELOW_REQUIRED"]

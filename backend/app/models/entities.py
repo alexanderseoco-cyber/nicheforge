@@ -36,6 +36,29 @@ class City(Base):
     __table_args__ = (UniqueConstraint("name", "state_code", "population_vintage", name="uq_city_vintage"),)
 
 
+class ProviderLocationIdentity(Base):
+    __tablename__ = "provider_location_identities"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    city_id: Mapped[str] = mapped_column(ForeignKey("cities.id"), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    location_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider_location_name: Mapped[str] = mapped_column(String(240), nullable=False)
+    country_code: Mapped[str] = mapped_column(String(8), nullable=False)
+    state_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    city_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    location_type: Mapped[str] = mapped_column(String(40), nullable=False, default="City")
+    source: Mapped[str] = mapped_column(String(40), nullable=False)
+    verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    imported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (
+        UniqueConstraint("provider", "city_id", name="uq_provider_location_city"),
+        UniqueConstraint("provider", "country_code", "location_code", name="uq_provider_location_code"),
+    )
+
+
 class CandidateEntity(Base):
     """Global logical candidate identity, independent of project membership."""
     __tablename__ = "candidate_entities"
@@ -99,6 +122,8 @@ class Run(Base):
     kd_operator: Mapped[str] = mapped_column(String(4), default="<")
     kd_mode: Mapped[str] = mapped_column(String(20), default="PRIORITY")
     organic_depth: Mapped[int] = mapped_column(Integer)
+    minimum_organic_rows: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    minimum_organic_coverage: Mapped[float | None] = mapped_column(Float, nullable=True)
     country_code: Mapped[str] = mapped_column(String(2), default="US")
     language_code: Mapped[str] = mapped_column(String(16), default="en")
     location_config: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -126,6 +151,7 @@ class RunCandidate(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
     project_candidate_id: Mapped[str] = mapped_column(ForeignKey("project_candidates.id"), index=True)
+    parent_run_candidate_id: Mapped[str | None] = mapped_column(ForeignKey("run_candidates.id"), nullable=True, index=True)
     validation_scope: Mapped[str] = mapped_column(String(30), default="LOCAL_RANK_RENT", index=True)
     authority_opportunity_reason: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     status: Mapped[str] = mapped_column(String(40), default=CandidateStatus.IMPORTED)
@@ -697,6 +723,34 @@ class ProviderCall(Base):
     duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     provider_reached: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     operation_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Nullable observational cost/cache telemetry. These fields are intentionally
+    # not used by validation decisions; existing ProviderCall fields above remain
+    # authoritative for their original meanings.
+    logical_item_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    unique_target_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_hit_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_miss_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    stale_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_outcome: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    cache_provider_dimension: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    actual_evidence_provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    evidence_reused_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    evidence_created_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    evidence_partial_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    evidence_missing_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    provider_item_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    items_returned_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    items_failed_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    batch_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    batch_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    batch_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    http_request_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    retry_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    http_request_sent: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    paid_attempt: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    reuse_scope: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    cost_confidence: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), nullable=True, index=True)
     run_candidate_id: Mapped[str | None] = mapped_column(ForeignKey("run_candidates.id"), nullable=True, index=True)
 
