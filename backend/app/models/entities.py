@@ -707,7 +707,7 @@ class ProviderCall(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     estimated_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
     actual_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
-    currency: Mapped[str] = mapped_column(String(3), default="USD")
+    currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
     error_category: Mapped[str | None] = mapped_column(String(80), nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     # Keyword-metrics chunk telemetry. These describe an actual attempt, not

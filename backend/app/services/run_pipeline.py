@@ -178,7 +178,7 @@ async def execute_run(db: Session, run_id: str, project_candidate_ids: list[str]
             snap, serp_stale_warning = _policy_cached(db, serp_key, "serp", SerpSnapshot, run.freshness_policy, requested_depth=run.organic_depth, minimum_organic_rows=run.minimum_organic_rows, minimum_organic_coverage=run.minimum_organic_coverage)
             if snap:
                 rows = db.scalars(select(SerpResultRow).where(SerpResultRow.snapshot_id == snap.id).order_by(SerpResultRow.position)).all()
-                counters["cache_hits"] += 1; _call(db, run, rc, snap.provider, "serp", "reuse", serp_key, "cache_hit", snap.source_kind, True)
+                counters["cache_hits"] += 1; _call(db, run, rc, snap.provider, "serp", "CACHE_REUSE", serp_key, "cache_hit", snap.source_kind, True, cost=None, telemetry={"logical_item_count": 1, "unique_target_count": 1, "provider_item_count": 0, "batch_count": 0, "http_request_count": 0, "http_request_sent": False, "paid_attempt": False, "retry_count": 0, "evidence_reused_count": 1, "actual_evidence_provider": snap.provider, "cost_confidence": "NOT_APPLICABLE", "metadata_json": {"scope": "CITY" if entity_city else ("US" if is_general else "UNKNOWN"), "requested_depth": run.organic_depth, "observed_depth": len(rows), "evidence_state": "CACHE_REUSE"}})
                 if serp_stale_warning: _event(db, rc, "STALE_EVIDENCE_REUSED", refs={"serp_snapshot_id": snap.id}, metadata={"freshness_policy": run.freshness_policy, "stage": "serp"})
             else:
                 provider_location_code = 2840 if is_general and run.country_code == "US" else None
@@ -195,7 +195,7 @@ async def execute_run(db: Session, run_id: str, project_candidate_ids: list[str]
                 serp_stage = await request_serp_and_classify(serp_provider(), serp_request, minimum_organic_rows=minimum_organic_rows, minimum_organic_coverage=minimum_organic_coverage)
                 serp = serp_stage.result
                 if serp_stage.reason_code == "SERP_PROVIDER_REQUEST_ERROR":
-                    _call(db, run, rc, serp.provider, "serp", "fetch", serp_key, "error", serp.provider, False)
+                    _call(db, run, rc, serp.provider, "serp", "PROVIDER_ACQUISITION", serp_key, "error", serp.provider, False, cost=None, telemetry={"logical_item_count": 1, "unique_target_count": 1, "provider_item_count": 1, "batch_size": 1, "batch_count": 1, "http_request_count": 1, "http_request_sent": True, "paid_attempt": False, "retry_count": 0, "items_returned_count": 0, "items_failed_count": 1, "evidence_missing_count": 1, "cost_confidence": "UNKNOWN", "metadata_json": {"provider_status_code": serp_stage.provider_status_code, "provider_status_message": serp_stage.provider_status_message, "evidence_state": "PROVIDER_ERROR", "requested_depth": run.organic_depth, "observed_depth": 0}})
                     _set_status(rc, serp_stage.status, serp_stage.reason_code)
                     counters["provider_errors"] += 1
                     rc.finished_at = utc_now()
@@ -208,7 +208,10 @@ async def execute_run(db: Session, run_id: str, project_candidate_ids: list[str]
                     row=SerpResultRow(snapshot_id=snap.id, position=item.position, title=item.title, url=item.url, root_domain=root_domain(item.url)); db.add(row); rows.append(row)
                 db.flush()
                 upsert_provider_cache(db, cache_key=serp_key, provider=snap.provider, operation="serp", evidence_type="serp", evidence_id=snap.id, fetched_at=snap.fetched_at, fresh_until=snap.fresh_until)
-                _call(db, run, rc, snap.provider, "serp", "fetch", serp_key, "success", snap.source_kind); counters["provider_calls"] += 1
+                coverage_telemetry = classify_serp_coverage(requested_depth=run.organic_depth, usable_organic_count=len(rows), minimum_organic_rows=minimum_organic_rows, minimum_organic_coverage=minimum_organic_coverage)
+                raw_response = serp.raw.get("response", {}) if isinstance(serp.raw, dict) else {}
+                reported_cost = (serp.raw or {}).get("cost") if isinstance(serp.raw, dict) else None
+                _call(db, run, rc, snap.provider, "serp", "PROVIDER_ACQUISITION", serp_key, "success", snap.source_kind, cost=reported_cost, telemetry={"logical_item_count": 1, "unique_target_count": 1, "provider_item_count": 1, "batch_size": 1, "batch_count": 1, "http_request_count": 1, "http_request_sent": True, "paid_attempt": False, "retry_count": 0, "items_returned_count": 1, "evidence_created_count": 1, "evidence_partial_count": 1 if coverage_telemetry.evidence_state.value == "PARTIAL_VALID" else 0, "evidence_missing_count": 1 if coverage_telemetry.evidence_state.value == "INSUFFICIENT" else 0, "currency": "USD" if reported_cost is not None else None, "cost_confidence": "PROVIDER_REPORTED" if reported_cost is not None else "UNKNOWN", "metadata_json": {"provider_status_code": raw_response.get("status_code"), "provider_status_message": raw_response.get("status_message"), "requested_depth": coverage_telemetry.requested_depth, "observed_depth": coverage_telemetry.usable_organic_count, "coverage_ratio": coverage_telemetry.coverage_ratio, "evidence_state": coverage_telemetry.evidence_state.value}}); counters["provider_calls"] += 1
             rc.serp_snapshot_id = snap.id; _event(db, rc, "SERP_SELECTED", refs={"serp_snapshot_id": snap.id})
             minimum_organic_rows, minimum_organic_coverage = resolve_serp_policy(requested_depth=run.organic_depth, minimum_organic_rows=run.minimum_organic_rows, minimum_organic_coverage=run.minimum_organic_coverage)
             coverage = classify_serp_coverage(requested_depth=run.organic_depth, usable_organic_count=len(rows), minimum_organic_rows=minimum_organic_rows, minimum_organic_coverage=minimum_organic_coverage)

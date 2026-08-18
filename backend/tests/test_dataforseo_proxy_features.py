@@ -143,7 +143,8 @@ def test_backlink_features_are_separate_and_cacheable(monkeypatch):
         assert cache.evidence_id == second[0].id
         assert db.get(ProxyBacklinkFeatureEvidence, first[0].id).mapping_status == "unrecoverable_raw_missing"
         assert second[0].provider == "dataforseo" and second[0].rank == 99
-        assert db.query(ProviderCall).filter_by(provider="dataforseo").count() == 2
+        assert db.query(ProviderCall).filter_by(provider="dataforseo", operation="PROVIDER_ACQUISITION").count() == 2
+        assert db.query(ProviderCall).filter_by(provider="dataforseo", operation="CACHE_REUSE").count() == 1
         assert db.query(ProxyBacklinkFeatureEvidence).count() == 2
 
 

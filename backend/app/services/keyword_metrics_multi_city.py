@@ -14,6 +14,7 @@ from app.services.customer_currency import resolve_cached_customer_currency
 from app.services.monetary_enrichment import resolve_usd_metrics
 from app.services.fx_evidence import resolve_persisted_fx
 from app.services.operation_budget import OperationBudgetExceeded
+from app.services.provider_call_telemetry import safe_create_provider_call, safe_update_provider_call
 
 
 class SystemicProviderFailure(BaseException):
@@ -219,7 +220,27 @@ class MultiCityKeywordMetricsOrchestrator:
             else:
                 pending_by_target.setdefault(request.location_name, []).append((item, request))
         report["planned_rpc_count"] = sum((len(entries) + self.chunk_size - 1) // self.chunk_size for entries in pending_by_target.values())
+        if report["cache_saved_keyword_items"]:
+            provider_name = getattr(self.provider, "provider_name", "unknown")
+            reuse_call = safe_create_provider_call(self.db, lambda: ProviderCall(
+                provider=provider_name,
+                execution_mode="LIVE" if getattr(self.provider, "is_live_transport", False) else "MOCK",
+                stage="keyword_metrics", operation="CACHE_REUSE", request_cache_key="keyword-metrics-reuse:" + hashlib.sha256(
+                    f"{batch.id}|{report['cache_saved_keyword_items']}".encode("utf-8")
+                ).hexdigest(),
+                outcome="CACHE_HIT", cache_hit=True, source_kind="cache", started_at=datetime.utcnow(),
+                actual_cost=None, estimated_cost=None, currency=None,
+                logical_item_count=len(work), unique_target_count=len(fresh_evidence),
+                cache_hit_count=report["cache_saved_keyword_items"], cache_miss_count=sum(len(v) for v in pending_by_target.values()),
+                stale_count=0, cache_outcome="HIT", cache_provider_dimension=provider_name,
+                actual_evidence_provider=provider_name,
+                evidence_reused_count=report["cache_saved_keyword_items"], evidence_created_count=0,
+                evidence_partial_count=0, evidence_missing_count=0,
+                provider_item_count=0, batch_size=0, batch_count=0, http_request_count=0,
+                http_request_sent=False, paid_attempt=False, retry_count=0, cost_confidence="NOT_APPLICABLE",
+            ))
         batched_results = {}
+        chunk_telemetry = []
         for target, entries in pending_by_target.items():
             for start in range(0, len(entries), self.chunk_size):
                 chunk = entries[start:start + self.chunk_size]
@@ -233,7 +254,7 @@ class MultiCityKeywordMetricsOrchestrator:
                 ).hexdigest()
                 provider_name = getattr(self.provider, "provider_name", "unknown")
                 live_transport = bool(getattr(self.provider, "is_live_transport", False))
-                provider_call = ProviderCall(
+                provider_call = safe_create_provider_call(self.db, lambda: ProviderCall(
                     provider=provider_name,
                     execution_mode="LIVE" if live_transport else "MOCK",
                     stage="keyword_metrics",
@@ -244,9 +265,9 @@ class MultiCityKeywordMetricsOrchestrator:
                     source_kind="live_api" if live_transport else "mock",
                     units=None,
                     started_at=datetime.utcnow(),
-                    estimated_cost=0.0,
+                    estimated_cost=None,
                     actual_cost=None,
-                    currency="USD",
+                    currency=None,
                     customer_id=self.customer_id,
                     target_identity=target,
                     geo_target_resource=geo_resource,
@@ -257,20 +278,36 @@ class MultiCityKeywordMetricsOrchestrator:
                     attempt_number=1,
                     provider_reached=None,
                     operation_count=None,
-                )
-                self.db.add(provider_call)
+                    logical_item_count=len(chunk),
+                    unique_target_count=len({request.keyword.casefold() for _, request in chunk}),
+                    cache_hit_count=0,
+                    cache_miss_count=len(chunk),
+                    stale_count=0,
+                    cache_outcome="MISS",
+                    cache_provider_dimension=provider_name,
+                    provider_item_count=len(chunk),
+                    batch_size=len(chunk),
+                    batch_count=1,
+                    http_request_count=1 if live_transport else 0,
+                    http_request_sent=live_transport,
+                    paid_attempt=None,
+                    retry_count=0,
+                    cost_confidence="UNKNOWN",
+                ))
+                chunk_telemetry.append((provider_call, [id(item) for item, _ in chunk]))
                 # Persist STARTED before transport so an interrupted process is
                 # auditable as an incomplete attempt rather than disappearing.
-                self.db.flush()
                 try:
                     returned = await self.provider.fetch([request for _, request in chunk])
                     finished_at = datetime.utcnow()
-                    provider_call.finished_at = finished_at
-                    provider_call.duration_ms = max(0.0, (finished_at - provider_call.started_at).total_seconds() * 1000)
-                    provider_call.outcome = "SUCCESS"
-                    provider_call.provider_reached = live_transport
-                    provider_call.operation_count = 1 if live_transport else 0
-                    provider_call.actual_cost = 0.0
+                    if provider_call is not None:
+                        safe_update_provider_call(self.db, provider_call,
+                            finished_at=finished_at,
+                            duration_ms=max(0.0, (finished_at - provider_call.started_at).total_seconds() * 1000),
+                            outcome="SUCCESS", provider_reached=live_transport,
+                            operation_count=1 if live_transport else 0, actual_cost=None,
+                            items_returned_count=sum(1 for item in returned if item is not None and not (isinstance(item.raw, dict) and item.raw.get("mapping_status") == "NOT_FOUND")),
+                            items_failed_count=max(0, len(chunk) - sum(1 for item in returned if item is not None and not (isinstance(item.raw, dict) and item.raw.get("mapping_status") == "NOT_FOUND"))))
                     report["historical_live_requests"] += 1
                     report["actual_rpc_count"] += 1
                     report["keywords_per_rpc"].append(len(chunk))
@@ -281,14 +318,15 @@ class MultiCityKeywordMetricsOrchestrator:
                 except Exception as exc:
                     finished_at = datetime.utcnow()
                     reached = _provider_reached(exc)
-                    provider_call.finished_at = finished_at
-                    provider_call.duration_ms = max(0.0, (finished_at - provider_call.started_at).total_seconds() * 1000)
-                    provider_call.provider_reached = reached
-                    provider_call.operation_count = 1 if reached else 0
-                    provider_call.actual_cost = 0.0 if reached else None
-                    provider_call.outcome = "BUDGET_EXCEEDED" if isinstance(exc, OperationBudgetExceeded) else ("PROVIDER_REJECTED" if reached else "NETWORK_FAILURE_BEFORE_PROVIDER")
-                    provider_call.error_category = type(exc).__name__
-                    provider_call.error_message = _safe_provider_error(exc)
+                    if provider_call is not None:
+                        outcome = "BUDGET_EXCEEDED" if isinstance(exc, OperationBudgetExceeded) else ("PROVIDER_REJECTED" if reached else "NETWORK_FAILURE_BEFORE_PROVIDER")
+                        safe_update_provider_call(self.db, provider_call,
+                            finished_at=finished_at,
+                            duration_ms=max(0.0, (finished_at - provider_call.started_at).total_seconds() * 1000),
+                            provider_reached=reached, operation_count=1 if reached else 0,
+                            actual_cost=None, items_returned_count=0,
+                            items_failed_count=len(chunk), outcome=outcome,
+                            error_category=type(exc).__name__, error_message=_safe_provider_error(exc))
                     report["historical_live_requests"] += 1
                     report["historical_failures"] += len(chunk)
                     for item, _ in chunk:
@@ -332,6 +370,26 @@ class MultiCityKeywordMetricsOrchestrator:
                 checkpoint_item()
             except Exception as exc:
                 item.status, item.error_code, item.error_message = "PROVIDER_FAILED", type(exc).__name__, str(exc)[:500]; report["historical_failures"] += 1; checkpoint_item()
+        # The normal evidence transaction remains authoritative. Once all
+        # evidence objects have been flushed, finalize only observational counts
+        # on their originating chunk rows. A telemetry update cannot roll back
+        # the business work because it is savepoint-isolated.
+        self.db.flush()
+        item_by_id = {id(item): item for item, _ in work}
+        for provider_call, item_ids in chunk_telemetry:
+            if provider_call is None:
+                continue
+            created = sum(1 for item_id in item_ids if item_by_id[item_id].status == "MAPPED")
+            try:
+                safe_update_provider_call(
+                    self.db, provider_call,
+                    evidence_created_count=created,
+                evidence_missing_count=len(item_ids) - created,
+                actual_cost=None, estimated_cost=None,
+                )
+            except Exception as exc:  # defensive boundary around observational finalization
+                import logging
+                logging.getLogger(__name__).warning("provider_call_telemetry_finalization_failed: %s", type(exc).__name__)
         batch.status = "COMPLETED"; batch.deduplicated_count = len(work); batch.returned_count = report["historical_successes"] + report["historical_cache_hits"]; batch.mapped_count = batch.returned_count; batch.unmapped_count = len(report["failed_items"]) + report["historical_failures"]; self.db.commit()
         self.db.expire_on_commit = previous_expire_on_commit
         return report

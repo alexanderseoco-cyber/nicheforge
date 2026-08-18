@@ -21,6 +21,7 @@ class DataForSEOBacklinkSummaryProvider:
         self.estimated_cost = estimated_cost
         self.batch_size = min(max(1, batch_size), 1000)
         self.budget = budget
+        self.last_batch_reports: list[dict] = []
 
     def validate_live_execution(self) -> None:
         if not self.enabled:
@@ -35,12 +36,20 @@ class DataForSEOBacklinkSummaryProvider:
         if not targets:
             return []
         output: list[BacklinkFeatureResult] = []
+        self.last_batch_reports = []
         for start in range(0, len(targets), self.batch_size):
             batch = targets[start:start + self.batch_size]
-            data = await self.client.post(self.endpoint, [{"targets": [target.root_domain for target in batch]}])
+            report = {"targets": [target.root_domain for target in batch], "cost": None, "error": None}
+            self.last_batch_reports.append(report)
+            try:
+                data = await self.client.post(self.endpoint, [{"targets": [target.root_domain for target in batch]}])
+            except Exception as exc:
+                report["error"] = str(exc)[:2000]
+                raise
             task = (data.get("tasks") or [{}])[0]
             task_result = (task.get("result") or [{}])[0]
             items = task_result.get("items") or []
+            report.update({"cost": task.get("cost", data.get("cost")), "data": data})
             by_target = {}
             for item in items:
                 item_target = item.get("target") or item.get("url")

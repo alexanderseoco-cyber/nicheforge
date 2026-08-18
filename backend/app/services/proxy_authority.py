@@ -15,6 +15,7 @@ from app.providers.contracts import AuthorityTarget, ProxyAuthorityResult
 from app.providers.factory import ahrefs_proxy_provider, dataforseo_backlink_proxy_provider
 from app.services.cache_keys import evidence_is_fresh, provider_cache_key
 from app.services.normalization import root_domain
+from app.services.provider_call_telemetry import safe_create_provider_call, safe_update_provider_call
 
 
 PROXY_UNCALIBRATED = "UNCALIBRATED_HIGH_RECALL"
@@ -98,15 +99,57 @@ async def evaluate_run_candidate_proxy(db: Session, run: Run, rc: RunCandidate,
         cache = db.scalar(select(ProviderCache).where(ProviderCache.cache_key == key))
         evidence = db.get(ProxyAuthorityEvidence, cache.evidence_id) if cache and cache.evidence_type == "proxy_authority" else None
         if evidence and not force_refresh and evidence_is_fresh(cache.fresh_until):
-            ratings.append(evidence.domain_rating); cached_count += 1; continue
-        result: ProxyAuthorityResult = (await ahrefs_proxy_provider().fetch([AuthorityTarget(row.url, domain)]))[0]
+            ratings.append(evidence.domain_rating); cached_count += 1
+            safe_create_provider_call(db, lambda: ProviderCall(
+                provider="ahrefs", stage="proxy_authority", operation="CACHE_REUSE",
+                request_cache_key=key, outcome="cache_hit", cache_hit=True, source_kind="cache",
+                started_at=_now(), finished_at=_now(), run_id=run.id, run_candidate_id=rc.id,
+                logical_item_count=1, unique_target_count=1, provider_item_count=0,
+                batch_count=0, batch_size=0, http_request_count=0, http_request_sent=False,
+                paid_attempt=False, retry_count=0, evidence_reused_count=1,
+                actual_evidence_provider="ahrefs", actual_cost=None, estimated_cost=None,
+                currency=None, cost_confidence="NOT_APPLICABLE",
+                metadata_json={"evidence_state": "CACHE_REUSE"},
+            ))
+            continue
+        call = safe_create_provider_call(db, lambda: ProviderCall(
+            provider="ahrefs", stage="proxy_authority", operation="PROVIDER_ACQUISITION",
+            request_cache_key=key, outcome="started", cache_hit=False, source_kind="ahrefs_api",
+            started_at=_now(), run_id=run.id, run_candidate_id=rc.id,
+            logical_item_count=1, unique_target_count=1, provider_item_count=1,
+            batch_count=1, batch_size=1, http_request_count=1, http_request_sent=True,
+            paid_attempt=None, retry_count=0, actual_cost=None, estimated_cost=None,
+            currency=None, cost_confidence="UNKNOWN", actual_evidence_provider="ahrefs",
+        ))
+        try:
+            result: ProxyAuthorityResult = (await ahrefs_proxy_provider().fetch([AuthorityTarget(row.url, domain)]))[0]
+        except Exception as exc:
+            safe_update_provider_call(db, call, outcome="error", finished_at=_now(),
+                                      items_returned_count=0, items_failed_count=1,
+                                      evidence_missing_count=1, error_category="provider",
+                                      error_message=str(exc)[:2000])
+            raise
+        if result.domain_rating is None:
+            safe_update_provider_call(db, call, outcome="success", finished_at=_now(),
+                                      items_returned_count=0, items_failed_count=1,
+                                      evidence_created_count=0, evidence_missing_count=1,
+                                      evidence_partial_count=0,
+                                      metadata_json={"evidence_state": "MISSING"})
+            ratings.append(None); fetched_count += 1
+            continue
         evidence = ProxyAuthorityEvidence(target_url=row.url, root_domain=domain, provider="ahrefs", metric="domain_rating", domain_rating=result.domain_rating, source_kind="ahrefs_api", raw_payload=result.raw or {}, request_metadata={"endpoint": "/v3/public/domain-rating-free"}, fetched_at=_now(), fresh_until=_now() + timedelta(days=30))
         db.add(evidence); db.flush()
         if cache:
             cache.evidence_id = evidence.id; cache.fetched_at = evidence.fetched_at; cache.fresh_until = evidence.fresh_until; cache.status = "usable"
         else:
             db.add(ProviderCache(cache_key=key, provider="ahrefs", operation="domain_rating_free", evidence_type="proxy_authority", evidence_id=evidence.id, fetched_at=evidence.fetched_at, fresh_until=evidence.fresh_until))
-        db.add(ProviderCall(provider="ahrefs", stage="proxy_authority", operation="domain_rating_free", request_cache_key=key, outcome="success", cache_hit=False, source_kind="ahrefs_api", units=0, started_at=evidence.fetched_at, finished_at=_now(), estimated_cost=0.0, actual_cost=0.0, run_id=run.id, run_candidate_id=rc.id))
+        safe_update_provider_call(db, call, outcome="success", finished_at=_now(),
+                                  items_returned_count=1 if result.domain_rating is not None else 0,
+                                  items_failed_count=0 if result.domain_rating is not None else 1,
+                                  evidence_created_count=1 if result.domain_rating is not None else 0,
+                                  evidence_missing_count=0 if result.domain_rating is not None else 1,
+                                  evidence_partial_count=0,
+                                  metadata_json={"evidence_state": "CREATED" if result.domain_rating is not None else "MISSING"})
         ratings.append(result.domain_rating); fetched_count += 1
         db.add(RunCandidateProxyAuthorityEvidence(run_candidate_id=rc.id, serp_result_row_id=row.id, proxy_authority_evidence_id=evidence.id, ranking_position=row.position, dr_value_used=evidence.domain_rating))
     # Cached evidence follows the same immutable SERP-row lineage as freshly fetched evidence.
@@ -157,11 +200,44 @@ async def enrich_backlink_features(db: Session, run: Run, rc: RunCandidate,
         evidence = db.get(ProxyBacklinkFeatureEvidence, cache.evidence_id) if cache and cache.evidence_type == "proxy_backlink_features" else None
         if evidence and evidence.mapping_status == "mapped" and not force_refresh and evidence_is_fresh(cache.fresh_until):
             evidence_by_domain[domain] = evidence
+            safe_create_provider_call(db, lambda: ProviderCall(
+                provider="dataforseo", stage="proxy_authority_enrichment", operation="CACHE_REUSE",
+                request_cache_key=key, outcome="cache_hit", cache_hit=True, source_kind="cache",
+                started_at=_now(), finished_at=_now(), run_id=run.id, run_candidate_id=rc.id,
+                logical_item_count=1, unique_target_count=1, provider_item_count=0,
+                batch_size=0, batch_count=0, http_request_count=0, http_request_sent=False,
+                retry_count=0, paid_attempt=False, evidence_reused_count=1,
+                evidence_created_count=0, evidence_missing_count=0,
+                actual_evidence_provider="dataforseo", actual_cost=None, estimated_cost=None,
+                currency=None, cost_confidence="NOT_APPLICABLE",
+                metadata_json={"evidence_state": "CACHE_REUSE"},
+            ))
         else:
             missing.append(AuthorityTarget(row.url, domain))
     if missing:
         provider = dataforseo_backlink_proxy_provider()
-        results = await provider.fetch(missing)
+        try:
+            results = await provider.fetch(missing)
+        except Exception as exc:
+            reports = getattr(provider, "last_batch_reports", []) or [{"targets": [target.root_domain for target in missing], "cost": None, "error": str(exc)}]
+            for report in reports:
+                domains = report.get("targets", [])
+                cost = report.get("cost")
+                safe_create_provider_call(db, lambda domains=domains, cost=cost, exc=exc: ProviderCall(
+                    provider="dataforseo", stage="proxy_authority_enrichment", operation="PROVIDER_ACQUISITION",
+                    request_cache_key=provider_cache_key("dataforseo", "proxy_backlink_batch", targets=sorted(domains)),
+                    outcome="provider_error", cache_hit=False, source_kind="dataforseo_backlinks",
+                    started_at=_now(), finished_at=_now(), run_id=run.id, run_candidate_id=rc.id,
+                    logical_item_count=len(domains), unique_target_count=len(set(domains)), provider_item_count=len(domains),
+                    batch_size=len(domains), batch_count=1, http_request_count=1, http_request_sent=True,
+                    retry_count=0, items_returned_count=0, items_failed_count=len(domains),
+                    evidence_created_count=0, evidence_missing_count=len(domains), evidence_partial_count=0,
+                    actual_cost=cost, estimated_cost=None, currency="USD" if cost is not None else None,
+                    cost_confidence="PROVIDER_REPORTED" if cost is not None else "UNKNOWN",
+                    paid_attempt=True if cost is not None else None, error_category="provider",
+                    error_message=str(exc)[:2000], metadata_json={"evidence_state": "PROVIDER_ERROR"},
+                ))
+            raise
         batch_fetched = _now()
         for target, result in zip(missing, results):
             fetched = _now(); fresh_until = fetched + timedelta(days=30)
@@ -175,9 +251,32 @@ async def enrich_backlink_features(db: Session, run: Run, rc: RunCandidate,
                 existing_cache.status = "usable" if evidence.mapping_status == "mapped" else "invalid"
             else:
                 db.add(ProviderCache(cache_key=cache_keys[target.root_domain], provider="dataforseo", operation=provider.operation, evidence_type="proxy_backlink_features", evidence_id=evidence.id, fetched_at=fetched, fresh_until=fresh_until))
-        actual_cost = next((item.actual_cost for item in results if item.actual_cost is not None), None)
-        mapping_failed = any(getattr(result, "mapping_status", "mapped") != "mapped" for result in results)
-        db.add(ProviderCall(provider="dataforseo", stage="proxy_authority_enrichment", operation=provider.operation, request_cache_key=provider_cache_key("dataforseo", "proxy_backlink_batch", targets=sorted(cache_keys)), outcome="mapping_failure" if mapping_failed else "success", cache_hit=False, source_kind="dataforseo_backlinks", units=None, started_at=batch_fetched, finished_at=_now(), estimated_cost=provider.estimated_cost, actual_cost=actual_cost, run_id=run.id, run_candidate_id=rc.id, error_category="mapping" if mapping_failed else None, error_message="One or more target results lacked documented core backlink fields" if mapping_failed else None))
+        reports = getattr(provider, "last_batch_reports", []) or [{"targets": [target.root_domain for target in missing], "cost": next((item.actual_cost for item in results if item.actual_cost is not None), None)}]
+        result_by_domain = {target.root_domain: result for target, result in zip(missing, results)}
+        offset = 0
+        for batch_index, report in enumerate(reports, 1):
+            domains = report.get("targets", [])
+            batch_results = [result_by_domain.get(domain) for domain in domains]
+            returned = [result for result in batch_results if result is not None and getattr(result, "mapping_status", "mapped") == "mapped"]
+            failed = len(domains) - len(returned)
+            cost = report.get("cost")
+            safe_create_provider_call(db, lambda domains=domains, returned=returned, failed=failed, cost=cost, batch_index=batch_index: ProviderCall(
+                provider="dataforseo", stage="proxy_authority_enrichment", operation="PROVIDER_ACQUISITION",
+                request_cache_key=provider_cache_key("dataforseo", "proxy_backlink_batch", targets=sorted(domains), batch_index=batch_index),
+                outcome="success" if not failed else "mapping_failure", cache_hit=False, source_kind="dataforseo_backlinks",
+                started_at=batch_fetched, finished_at=_now(), run_id=run.id, run_candidate_id=rc.id,
+                logical_item_count=len(domains), unique_target_count=len(set(domains)), provider_item_count=len(domains),
+                batch_size=len(domains), batch_count=1, http_request_count=1, http_request_sent=True,
+                retry_count=0, items_returned_count=len(returned), items_failed_count=failed,
+                evidence_created_count=len(returned), evidence_missing_count=failed, evidence_partial_count=0,
+                actual_cost=cost, estimated_cost=None, currency="USD" if cost is not None else None,
+                cost_confidence="PROVIDER_REPORTED" if cost is not None else "UNKNOWN",
+                paid_attempt=True if cost is not None else None,
+                error_category="mapping" if failed else None,
+                error_message="One or more target results lacked documented core backlink fields" if failed else None,
+                metadata_json={"evidence_state": "PARTIAL" if failed and returned else ("MISSING" if failed else "CREATED")},
+            ))
+            offset += len(domains)
     run.proxy_configuration_snapshot = {**(run.proxy_configuration_snapshot or {}), "feature_sources": ["ahrefs.domain_rating", "dataforseo.backlink_summary"], "feature_set_version": "ahrefs_dr_v1+dataforseo_backlink_v1", "reject_audit_percent": run.proxy_reject_audit_percent or 0.0}
     db.commit()
     for domain, evidence in evidence_by_domain.items():
@@ -185,4 +284,4 @@ async def enrich_backlink_features(db: Session, run: Run, rc: RunCandidate,
         if not db.scalar(select(RunCandidateBacklinkEvidence).where(RunCandidateBacklinkEvidence.run_candidate_id == rc.id, RunCandidateBacklinkEvidence.serp_result_row_id == row.id)):
             db.add(RunCandidateBacklinkEvidence(run_candidate_id=rc.id, serp_result_row_id=row.id, proxy_backlink_evidence_id=evidence.id, ranking_position=row.position))
     db.commit()
-    return [evidence_by_domain[domain] for domain in unique]
+    return [evidence_by_domain[domain] for domain in unique if domain in evidence_by_domain]
