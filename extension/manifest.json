@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "NicheForge Scout",
   "short_name": "NS",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Google Ads keyword metrics and Ahrefs DR intelligence inside Google Search.",
   "permissions": ["storage", "activeTab"],
   "host_permissions": ["https://www.google.com/*", "http://localhost:8000/*", "http://127.0.0.1:8000/*"],

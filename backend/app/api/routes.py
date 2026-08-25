@@ -34,7 +34,8 @@ from app.api.auth_routes import get_current_user
 from app.models.entities import User, RunReservation
 from app.services.user_quotas import reserve, finish, snapshot
 from app.providers.keyword_metrics_safety import KeywordMetricsGuardError
-from app.services.currency_normalization import normalize_to_usd
+from app.services.currency_normalization import normalize_to_usd, ExchangeRateApiProvider
+from app.services.fx_evidence import persist_fx_rate, resolve_persisted_fx
 from app.services.customer_currency import resolve_cached_customer_currency
 from app.services.monetary_enrichment import resolve_usd_metrics
 from app.services.derived_metrics import calculate_derived_metrics
@@ -152,7 +153,23 @@ async def keyword_metrics_research(payload: KeywordMetricsRequest, user: User = 
             currency_resolution = resolve_cached_customer_currency(db, provider=item.provider, customer_id=settings.google_ads_customer_id, override=item.provider_currency_code)
             currency = currency_resolution.currency_code
             item.provider_currency_code = currency
-            usd = resolve_usd_metrics(db, provider_currency=currency, cpc=item.cpc, low_bid=item.low_bid, high_bid=item.high_bid, customer_id=settings.google_ads_customer_id)
+            # Reuse fresh persisted FX evidence first.  If the configured
+            # customer currency is non-USD and no current evidence exists,
+            # obtain one rate from the free ExchangeRate-API open endpoint,
+            # persist it, and reuse it for this result.  Never infer USD from
+            # the search target or display provider-currency values as USD.
+            fx_rate = resolve_persisted_fx(db, currency, "USD") if currency and currency.upper() != "USD" else None
+            if currency and currency.upper() != "USD" and fx_rate is None:
+                fx_provider = ExchangeRateApiProvider()
+                try:
+                    fx_rate = await fx_provider.get_rate(currency, "USD")
+                    if fx_rate is not None:
+                        persist_fx_rate(db, fx_rate)
+                except Exception as exc:
+                    logger.warning("FX lookup failed: %s", type(exc).__name__)
+                finally:
+                    await fx_provider.client.aclose()
+            usd = resolve_usd_metrics(db, provider_currency=currency, cpc=item.cpc, low_bid=item.low_bid, high_bid=item.high_bid, customer_id=settings.google_ads_customer_id, fx_rate=fx_rate)
             item.usd_cpc, item.usd_low_bid, item.usd_high_bid = usd.usd_cpc, usd.usd_low_bid, usd.usd_high_bid
             item.fx_rate, item.fx_rate_date, item.fx_source = usd.fx_rate, usd.fx_rate_date, usd.fx_source
             db.add(KeywordMetricEvidence(query_id=query.id, submitted_keyword=request.keyword, provider_keyword=item.provider_keyword or item.keyword, normalized_keyword=request.keyword.strip().casefold(), location_name=request.location_name, location_target=request.location_target or {}, language_code=request.language_code, country_code=request.country_code, provider=item.provider, source_kind=item.provider, avg_monthly_searches=item.avg_monthly_searches, competition=item.competition, competition_index=item.competition_index, cpc=item.cpc, low_bid=item.low_bid, high_bid=item.high_bid, provider_currency_code=item.provider_currency_code, usd_cpc=item.usd_cpc, usd_low_bid=item.usd_low_bid, usd_high_bid=item.usd_high_bid, fx_rate=item.fx_rate, fx_rate_date=item.fx_rate_date, fx_source=item.fx_source, monthly_history=item.monthly_history, raw_payload=item.raw or {}, cost=item.cost, mapping_status=result.mapping_status.get(request.keyword, "MAPPED")))
