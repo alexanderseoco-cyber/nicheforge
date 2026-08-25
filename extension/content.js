@@ -1,41 +1,13 @@
-function organicLinks() {
-  const seen = new Set();
-  const rows = [];
-  for (const a of document.querySelectorAll('a')) {
-    const h3 = a.querySelector('h3');
-    if (!h3 || !a.href || seen.has(a.href)) continue;
-    try {
-      const u = new URL(a.href);
-      if (!/^https?:$/.test(u.protocol)) continue;
-      seen.add(a.href);
-      rows.push({a, url:a.href});
-    } catch {}
-  }
-  return rows.slice(0, 10);
-}
-
-function render(rows, metricsByUrl) {
-  for (const row of rows) {
-    if (row.a.parentElement?.querySelector(':scope > .nicheforge-metrics')) continue;
-    const m = metricsByUrl[row.url];
-    if (!m) continue;
-    const el = document.createElement('div');
-    el.className = 'nicheforge-metrics';
-    el.style.cssText = 'font-size:12px;margin-top:2px;color:#356;';
-    el.textContent = `DA ${m.da ?? 'N/A'} (Moz) | PA ${m.pa ?? 'N/A'} (Moz) | RD ${m.linking_root_domains ?? 'N/A'} | Spam ${m.spam_score ?? 'N/A'}`;
-    row.a.parentElement?.appendChild(el);
-  }
-}
-
-async function refresh() {
-  const rows = organicLinks();
-  if (!rows.length) return;
-  chrome.runtime.sendMessage({type:'NICHEFORGE_LOOKUP', urls:rows.map(x=>x.url)}, response => {
-    if (!response?.ok) return;
-    render(rows, response.data?.by_url || {});
-  });
-}
-
-refresh();
-new MutationObserver(() => { clearTimeout(window.__nfTimer); window.__nfTimer=setTimeout(refresh,400); })
-  .observe(document.documentElement, {subtree:true, childList:true});
+(() => {
+  const STYLE_ID = "nicheforge-scout-style", BAR_ID = "nicheforge-scout-bar";
+  let timer, lastKeyword = "", lastUrlsKey = "";
+  function organicLinks() { const seen = new Set(), rows = []; for (const a of document.querySelectorAll("a")) { const h3 = a.querySelector("h3"); if (!h3 || !a.href) continue; try { const url = new URL(a.href); if (!["http:", "https:"].includes(url.protocol) || seen.has(url.href)) continue; seen.add(url.href); rows.push({a, url: url.href}); } catch {} } return rows.slice(0, 10); }
+  function style() { if (document.getElementById(STYLE_ID)) return; const el = document.createElement("style"); el.id = STYLE_ID; el.textContent = `#${BAR_ID}{position:relative;z-index:1000;display:flex;gap:8px;align-items:center;padding:7px 14px;background:#15171c;color:#bfc5d2;font:600 12px Arial;border-bottom:1px solid #343944;box-shadow:0 2px 8px #0002}#${BAR_ID} .ns-brand{font-size:16px;font-weight:900;color:#fff;letter-spacing:-1px;margin-right:4px}#${BAR_ID} .ns-item{padding:4px 8px;border:1px solid #343944;border-radius:7px;white-space:nowrap}#${BAR_ID} .ns-status{color:#9aa3b2;font-weight:500}.ns-trend-bars{display:inline-flex;align-items:end;gap:2px;height:15px;margin-left:5px;vertical-align:middle}.ns-trend-bars i{display:block;width:3px;min-height:2px;border-radius:2px 2px 0 0;background:#7890d8}.nicheforge-scout-dr{display:inline-block;margin:2px 0 0 4px;padding:2px 5px;border-radius:4px;background:#e9f8ed;color:#14833b;font:700 11px Arial;vertical-align:middle}.nicheforge-scout-dr.ns-missing{color:#78848e;background:#f1f3f5}`; document.documentElement.appendChild(el); }
+  function insertBar() { style(); if (document.getElementById(BAR_ID)) return; const bar = document.createElement("div"); bar.id = BAR_ID; bar.innerHTML = `<span class="ns-brand">NS</span><span class="ns-item">VOL <b id="ns-vol">—</b></span><span class="ns-item">CPC <b id="ns-cpc">—</b></span><span class="ns-item">COMP <b id="ns-comp">—</b></span><span class="ns-item">TREND <b id="ns-trend">—</b></span><span class="ns-status" id="ns-status">NicheForge Scout</span>`; const anchor = document.querySelector("#searchform") || document.querySelector("form[role=search]"); (anchor?.parentElement || document.body).prepend(bar); }
+  function set(id, value) { const el = document.getElementById(id); if (el) el.textContent = value == null ? "—" : String(value); }
+  function renderMetrics(result) { const item = result?.results?.[0]; if (!item) { set("ns-status", result?.error || "Google Ads data unavailable"); return; } set("ns-vol", item.avg_monthly_searches?.toLocaleString?.() ?? item.avg_monthly_searches); const cpc = item.usd_cpc; set("ns-cpc", cpc == null ? "—" : `$${Number(cpc).toFixed(2)}`); set("ns-comp", item.competition_index ?? item.competition); const history = Array.isArray(item.monthly_history) ? item.monthly_history : []; const values = history.map(x => Number(x.searches || 0)), max = Math.max(...values, 1); const trend = document.getElementById("ns-trend"); if (trend) trend.innerHTML = history.length ? `<span class="ns-trend-bars" title="12-month Google Ads search history">${history.map(x => `<i style="height:${Math.max(2, Math.round(Number(x.searches || 0) / max * 15))}px" title="${x.year}-${String(x.month).padStart(2, "0")}: ${Number(x.searches || 0).toLocaleString()}"></i>`).join("")}</span>` : "—"; set("ns-status", `Google Ads · ${item.mapping_status || "MAPPED"} · ${result.target_country || "WORLD"}`); }
+  function detectCountry() { const params = new URLSearchParams(location.search), gl = (params.get("gl") || "").toUpperCase(); if (gl) return gl; const text = (document.body.innerText || "").slice(0, 5000).toLowerCase(); if (text.includes("canada")) return "CA"; if (text.includes("united kingdom") || text.includes("uk")) return "GB"; if (text.includes("australia")) return "AU"; if (text.includes("pakistan")) return "PK"; if (text.includes("united arab emirates")) return "AE"; return "WORLD"; }
+  function renderDr(rows, byUrl) { for (const row of rows) { if (row.a.parentElement?.querySelector(".nicheforge-scout-dr")) continue; const data = byUrl?.[row.url], badge = document.createElement("span"); badge.className = "nicheforge-scout-dr" + (data?.dr == null ? " ns-missing" : ""); badge.textContent = data?.dr == null ? "DR —" : `DR ${data.dr}`; const host = row.a.parentElement; if (host?.parentElement) host.parentElement.insertBefore(badge, host); else if (host) host.insertBefore(badge, row.a); } }
+  function refresh() { insertBar(); const keyword = new URLSearchParams(location.search).get("q") || "", rows = organicLinks(), urlsKey = rows.map(x => x.url).join("|"); if (keyword && keyword !== lastKeyword) { lastKeyword = keyword; chrome.runtime.sendMessage({type: "NS_RESEARCH_KEYWORD", keyword, countryCode: detectCountry()}, response => { if (response?.ok) renderMetrics(response.data); else set("ns-status", response?.error || "Google Ads unavailable"); }); } if (rows.length && urlsKey !== lastUrlsKey) { lastUrlsKey = urlsKey; chrome.runtime.sendMessage({type: "NS_LOOKUP_DR", urls: rows.map(x => x.url)}, response => { if (response?.ok) renderDr(rows, response.data?.by_url || {}); }); } }
+  refresh(); new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(refresh, 500); }).observe(document.documentElement, {subtree: true, childList: true});
+})();

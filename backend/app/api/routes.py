@@ -15,7 +15,7 @@ from app.services.validation_scope import GENERAL_SCOPE, LOCAL_SCOPE, resolve_sc
 from app.services.target_identity import normalize_target
 from app.services.gates import population_gate
 from app.services.pipeline import process_candidate
-from app.providers.factory import authority_provider
+from app.providers.factory import authority_provider, ahrefs_proxy_provider
 from app.providers.contracts import AuthorityTarget
 from app.services.normalization import root_domain
 from app.services.run_pipeline import execute_run
@@ -769,14 +769,16 @@ def project_candidate_history(project_candidate_id: str, db: Session = Depends(g
 @router.post("/overlay/metrics")
 async def overlay_metrics(payload: OverlayRequest):
     targets = [AuthorityTarget(url=u, root_domain=root_domain(u)) for u in payload.urls]
-    provider = authority_provider()
-    metrics = await provider.fetch(targets)
+    provider = ahrefs_proxy_provider()
+    try:
+        metrics = await provider.fetch(targets)
+    except Exception as exc:
+        logger.warning("Ahrefs overlay lookup failed: %s", type(exc).__name__)
+        return {"provider": "ahrefs", "metric": "domain_rating", "by_url": {}, "error": str(exc)[:300]}
     return {
+        "provider": "ahrefs", "metric": "domain_rating",
         "by_url": {
-            m.url: {
-                "root_domain": m.root_domain, "da": m.da, "pa": m.pa,
-                "spam_score": m.spam_score, "linking_root_domains": m.linking_root_domains,
-                "backlinks": m.backlinks, "provider": m.provider,
-            } for m in metrics
+            m.url: {"root_domain": m.root_domain, "dr": m.domain_rating, "provider": m.provider, "metric": m.metric}
+            for m in metrics if m.provider == "ahrefs" and m.metric == "domain_rating"
         }
     }
